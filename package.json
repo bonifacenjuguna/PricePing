@@ -1,0 +1,23 @@
+{
+  "name": "priceping",
+  "version": "1.0.0",
+  "description": "Telegram crypto price-alert bot for @PricePing",
+  "main": "src/bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/bot.js",
+    "migrate": "node scripts/migrate.js",
+    "prepare-assets": "node scripts/prepare-assets.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "express": "^4.19.2",
+    "pg": "^8.11.5",
+    "ioredis": "^5.4.1",
+    "sharp": "^0.33.4",
+    "dotenv": "^16.4.5"
+  }
+}
