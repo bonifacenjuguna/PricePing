@@ -9,8 +9,8 @@ const CARD_WIDTH = 1080;
 const CARD_HEIGHT = 566;
 const LOGO_CIRCLE_CX = 170;
 const LOGO_CIRCLE_CY = 195;
-const LOGO_CIRCLE_R = 112; // was 82 — bumped up ~35% per redesign request
-const LOGO_SIZE = 148; // was 108 — pre-converted PNG is rendered at this square size
+const LOGO_CIRCLE_R = 112;
+const LOGO_SIZE = 196; // was 148 — fills more of the white circle, margin still visible (~14px ring)
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
