@@ -1,6 +1,6 @@
 {
   "name": "priceping",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Telegram crypto price-alert bot for @PricePing",
   "main": "src/bot.js",
   "type": "commonjs",

@@ -8,6 +8,21 @@ to the `@PricePing` channel, plus a private admin menu for managing it.
 BTC, ETH, USDT, XRP, BNB, USDC, SOL, TRX, DOGE, XAUT — see `src/config.js`
 for brand colors, Binance pairs, and default thresholds.
 
+## Card & caption design (v0.1.3)
+
+- **Font**: cards render in Poppins (Bold for name/price/badge, Regular for
+  the symbol subtitle), bundled as `.ttf` files in `src/assets/fonts/` and
+  embedded directly into the SVG via `@font-face` — this is deliberate:
+  rendering never depends on whatever fonts happen to be installed on the
+  Railway image. Poppins is SIL Open Font License 1.1
+  (`src/assets/fonts/OFL.txt`), free to bundle and redistribute.
+- **Logo & name**: the logo circle and coin name/symbol are sized up
+  (~35% larger than the original design) for better legibility at
+  Telegram's in-feed thumbnail size.
+- **Caption**: two lines — `**Name** (SYMBOL) — $price ▲pct%` (arrow/%
+  omitted for USDT/USDC), then `@PricePing` as its own watermark line.
+  Sent with `parse_mode: 'HTML'` so the bold name renders correctly.
+
 ## One-time setup
 
 ```bash

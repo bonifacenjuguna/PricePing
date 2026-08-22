@@ -4,13 +4,31 @@ const cardRenderer = require('./cardRenderer');
 const format = require('../utils/format');
 const { Input } = require('telegraf');
 
+// Telegram caption uses HTML parse mode (see sendPhoto call below), so
+// anything interpolated from coin data must be HTML-escaped here — this is
+// separate from cardRenderer's escapeXml, which escapes for the SVG instead.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Two-line caption: "<b>Name</b> (SYMBOL) — $price ▲pct%" on the first line,
+// the @PricePing watermark on its own line underneath. Stablecoins drop the
+// arrow/percent badge since they don't get one on the card either.
 function buildCaption({ coin, price, changePct, direction }) {
   const priceStr = `$${format.formatPrice(price)}`;
-  if (coin.isStable || !direction) {
-    return `${coin.symbol} ${priceStr}`;
+  const name = escapeHtml(coin.name);
+  const symbol = escapeHtml(coin.symbol);
+
+  let firstLine = `<b>${name}</b> (${symbol}) \u2014 ${priceStr}`;
+  if (!coin.isStable && direction) {
+    const arrow = format.directionSymbol(direction);
+    firstLine += ` ${arrow} ${format.formatPct(changePct)}`;
   }
-  const arrow = format.directionSymbol(direction);
-  return `${coin.symbol} ${priceStr} ${arrow}${format.formatPct(changePct)}`;
+
+  return `${firstLine}\n@PricePing`;
 }
 
 // telegram: a Telegraf `Telegram` API instance (either `bot.telegram` or
@@ -35,6 +53,7 @@ async function sendAlert(telegram, alert) {
     try {
       await telegram.sendPhoto(config.channelId, Input.fromBuffer(buffer, `${alert.coin.symbol}.png`), {
         caption,
+        parse_mode: 'HTML',
       });
       return true;
     } catch (err) {
