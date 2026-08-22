@@ -14,21 +14,25 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;');
 }
 
-// Two-line caption: "<b>Name</b> (SYMBOL) — $price ▲pct%" on the first line,
-// the @PricePing watermark on its own line underneath. Stablecoins drop the
-// arrow/percent badge since they don't get one on the card either.
+// Three-row caption:
+//   <b>Name</b> (SYMBOL) — $price
+//   ▲ pct%                          (own row — omitted for stablecoins)
+//   @PricePing
 function buildCaption({ coin, price, changePct, direction }) {
   const priceStr = `$${format.formatPrice(price)}`;
   const name = escapeHtml(coin.name);
   const symbol = escapeHtml(coin.symbol);
 
-  let firstLine = `<b>${name}</b> (${symbol}) \u2014 ${priceStr}`;
+  const firstLine = `<b>${name}</b> (${symbol}) \u2014 ${priceStr}`;
+
+  const rows = [firstLine];
   if (!coin.isStable && direction) {
     const arrow = format.directionSymbol(direction);
-    firstLine += ` ${arrow} ${format.formatPct(changePct)}`;
+    rows.push(`${arrow} ${format.formatPct(changePct)}`);
   }
+  rows.push('@PricePing');
 
-  return `${firstLine}\n@PricePing`;
+  return rows.join('\n');
 }
 
 // telegram: a Telegraf `Telegram` API instance (either `bot.telegram` or

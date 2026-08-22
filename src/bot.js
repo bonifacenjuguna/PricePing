@@ -70,6 +70,31 @@ async function sendAnnouncementIfNeeded() {
 }
 
 // ---------------------------------------------------------------------------
+// Registers the slash-command menu with Telegram (the list that pops up
+// when the admin types "/" in the chat). Safe to call on every boot —
+// setMyCommands just overwrites whatever was registered before.
+// ---------------------------------------------------------------------------
+async function registerBotCommands() {
+  const commandList = [
+    { command: 'status', description: 'Bot status, uptime, and alerts today' },
+    { command: 'prices', description: 'Current price for every tracked coin' },
+    { command: 'thresholds', description: 'View all alert thresholds' },
+    { command: 'setthreshold', description: 'Change a threshold: SYMBOL AMOUNT' },
+    { command: 'pause', description: 'Stop posting alerts to the channel' },
+    { command: 'resume', description: 'Resume posting alerts' },
+    { command: 'test', description: 'Send a sample alert card to the channel' },
+    { command: 'help', description: 'Show the full command list' },
+  ];
+
+  try {
+    await bot.telegram.setMyCommands(commandList);
+    logger.info('Registered bot command menu with Telegram');
+  } catch (err) {
+    logger.warn('Could not register bot command menu', { message: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP server: webhook endpoint + a plain health check for Railway.
 // ---------------------------------------------------------------------------
 const app = express();
@@ -96,6 +121,7 @@ async function start() {
     logger.info(`HTTP server listening on port ${config.port}`);
   });
 
+  await registerBotCommands();
   await sendAnnouncementIfNeeded();
 
   scheduler.init(bot);

@@ -8,7 +8,7 @@ to the `@PricePing` channel, plus a private admin menu for managing it.
 BTC, ETH, USDT, XRP, BNB, USDC, SOL, TRX, DOGE, XAUT — see `src/config.js`
 for brand colors, Binance pairs, and default thresholds.
 
-## Card & caption design (v0.1.3)
+## Card & caption design (v0.1.4)
 
 - **Font**: cards render in Poppins (Bold for name/price/badge, Regular for
   the symbol subtitle), bundled as `.ttf` files in `src/assets/fonts/` and
@@ -18,10 +18,16 @@ for brand colors, Binance pairs, and default thresholds.
   (`src/assets/fonts/OFL.txt`), free to bundle and redistribute.
 - **Logo & name**: the logo circle and coin name/symbol are sized up
   (~35% larger than the original design) for better legibility at
-  Telegram's in-feed thumbnail size.
-- **Caption**: two lines — `**Name** (SYMBOL) — $price ▲pct%` (arrow/%
-  omitted for USDT/USDC), then `@PricePing` as its own watermark line.
-  Sent with `parse_mode: 'HTML'` so the bold name renders correctly.
+  Telegram's in-feed thumbnail size. The price line sits lower and shifted
+  right so it doesn't crowd the logo circle above it.
+- **Caption**: three rows — `<b>Name</b> (SYMBOL) — $price`, then
+  `▲ pct%` on its own line (omitted entirely for USDT/USDC), then
+  `@PricePing` as its own watermark line. Sent with `parse_mode: 'HTML'`
+  so the bold name renders correctly.
+- **Command menu**: `/status`, `/prices`, `/thresholds`, `/setthreshold`,
+  `/pause`, `/resume`, `/test`, and `/help` are registered with Telegram
+  via `setMyCommands` on every boot, so they show up in the "/" menu
+  suggestion list in the admin chat — no manual BotFather setup needed.
 
 ## One-time setup
 

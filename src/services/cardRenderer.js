@@ -99,7 +99,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction }) {
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="218" font-family="Poppins, sans-serif"
         font-size="40" font-weight="400" fill="${subTextColor}">${symbolStr}</text>
 
-  <text x="80" y="380" font-family="Poppins, sans-serif" font-size="96" font-weight="700"
+  <text x="100" y="430" font-family="Poppins, sans-serif" font-size="96" font-weight="700"
         fill="${textColor}">${escapeXml(priceStr)}</text>
 
   ${badge}
