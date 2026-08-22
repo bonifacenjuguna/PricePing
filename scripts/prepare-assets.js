@@ -14,19 +14,11 @@
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const { coins } = require('../src/coins');
-
-// This script only needs static coin data and the asset directory paths —
-// it must not require src/config.js, since that module loads DATABASE_URL
-// and REDIS_URL at import time and will abort the process if they aren't
-// set. Those are runtime dependencies, not build-time ones, and this
-// script runs during `npm run prepare-assets` at build time, before the
-// databases may even be provisioned.
-const config = {
-  coins,
-  assetsDir: path.join(__dirname, '..', 'src', 'assets'),
-  logosDir: path.join(__dirname, '..', 'src', 'assets', 'logos'),
-};
+// Deliberately importing coins.js directly, NOT config.js — this script
+// must run during Railway's build step, before DATABASE_URL/REDIS_URL/etc.
+// are necessarily resolved. config.js hard-exits if those are missing;
+// coins.js has no env-var dependency at all.
+const { coins, logosDir } = require('../src/coins');
 
 const LOGO_SIZE = 256;
 const REQUEST_TIMEOUT_MS = 8000;
@@ -66,8 +58,8 @@ function fallbackSvg(coin) {
 }
 
 async function processCoin(coin) {
-  const svgPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.svg`);
-  const pngPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
+  const svgPath = path.join(logosDir, `${coin.symbol.toLowerCase()}.svg`);
+  const pngPath = path.join(logosDir, `${coin.symbol.toLowerCase()}.png`);
 
   let svgContent;
   let source;
@@ -92,13 +84,13 @@ async function processCoin(coin) {
 }
 
 async function main() {
-  fs.mkdirSync(config.logosDir, { recursive: true });
+  fs.mkdirSync(logosDir, { recursive: true });
 
-  console.log(`Preparing logos for ${config.coins.length} coins into ${config.logosDir}\n`);
+  console.log(`Preparing logos for ${coins.length} coins into ${logosDir}\n`);
 
   let downloaded = 0;
   let fallback = 0;
-  for (const coin of config.coins) {
+  for (const coin of coins) {
     const source = await processCoin(coin);
     if (source === 'downloaded') downloaded += 1;
     else fallback += 1;

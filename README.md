@@ -26,11 +26,14 @@ coin's brand color so the bot still runs correctly — re-run the script
 later to swap in the real logo once you have a working connection.
 
 **Deploying straight to Railway without running this locally first:**
-`railway.json`'s `buildCommand` already runs `npm run prepare-assets`
-during Railway's build step (which has internet access, unlike a fully
-offline local machine), so logos get fetched automatically on every
-deploy — you don't need to run it locally yourself. If you'd rather only
-fetch logos once and keep them fixed across deploys, run
+`railway.json` already handles both one-time steps automatically:
+`build.buildCommand` runs `npm run prepare-assets` during Railway's build
+step (which has internet access), and `deploy.startCommand` runs
+`npm run migrate` every time the container boots, before `npm start`.
+Migrations are safe to re-run on every boot (`CREATE TABLE IF NOT EXISTS`
+/ `ON CONFLICT DO NOTHING` throughout), so this needs no manual step on
+your end — just set the env vars and deploy. If you'd rather only fetch
+logos once and keep them fixed across deploys, run
 `npm run prepare-assets` locally, commit the resulting `src/assets/logos/`
 folder to your repo, and remove `prepare-assets` from `buildCommand`.
 

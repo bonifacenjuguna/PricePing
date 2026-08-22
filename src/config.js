@@ -1,6 +1,5 @@
 require('dotenv').config();
-
-const { coins, defaultThresholds } = require('./coins');
+const { coins, defaultThresholds, assetsDir, logosDir } = require('./coins');
 
 function required(name) {
   const val = process.env[name];
@@ -11,11 +10,6 @@ function required(name) {
   }
   return val;
 }
-
-// Coin list and default thresholds live in ./coins.js — that module has no
-// environment/config dependencies, so it can also be required directly by
-// build-time scripts (e.g. scripts/prepare-assets.js) without needing
-// DATABASE_URL, REDIS_URL, or any other runtime secrets.
 
 module.exports = {
   botToken: required('BOT_TOKEN'),
@@ -46,6 +40,6 @@ module.exports = {
   coins,
   defaultThresholds,
 
-  assetsDir: require('path').join(__dirname, 'assets'),
-  logosDir: require('path').join(__dirname, 'assets', 'logos'),
+  assetsDir,
+  logosDir,
 };
