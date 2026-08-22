@@ -14,7 +14,19 @@
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const config = require('../src/config');
+const { coins } = require('../src/coins');
+
+// This script only needs static coin data and the asset directory paths —
+// it must not require src/config.js, since that module loads DATABASE_URL
+// and REDIS_URL at import time and will abort the process if they aren't
+// set. Those are runtime dependencies, not build-time ones, and this
+// script runs during `npm run prepare-assets` at build time, before the
+// databases may even be provisioned.
+const config = {
+  coins,
+  assetsDir: path.join(__dirname, '..', 'src', 'assets'),
+  logosDir: path.join(__dirname, '..', 'src', 'assets', 'logos'),
+};
 
 const LOGO_SIZE = 256;
 const REQUEST_TIMEOUT_MS = 8000;
