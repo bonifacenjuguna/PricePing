@@ -47,6 +47,27 @@ async function main() {
     );
   }
 
+  console.log('Seeding default channel ("main" = CHANNEL_ID env var)...');
+  await pool.query(
+    `INSERT INTO channels (name, chat_id, is_default)
+     VALUES ('main', $1, true)
+     ON CONFLICT (name) DO NOTHING`,
+    [config.channelId]
+  );
+
+  console.log('Importing legacy secondary channel setting, if one exists...');
+  const legacy = await pool.query(`SELECT value FROM settings WHERE key = 'secondary_channel_id'`);
+  if (legacy.rows.length && legacy.rows[0].value) {
+    await pool.query(
+      `INSERT INTO channels (name, chat_id, is_default)
+       VALUES ('secondary', $1, false)
+       ON CONFLICT (name) DO NOTHING`,
+      [legacy.rows[0].value]
+    );
+    console.log(`  Imported as channel "secondary" -> ${legacy.rows[0].value}. Old mirroring is gone — ` +
+      `use /addrule to mirror specific alerts there now, or /post SYMBOL secondary to post manually.`);
+  }
+
   console.log('Migration complete.');
   await pool.end();
 }

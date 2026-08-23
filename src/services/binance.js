@@ -81,11 +81,19 @@ async function fetch24hrStats(pairs) {
       const priceChangePercent = Number(entry.priceChangePercent);
       const highPrice = Number(entry.highPrice);
       const lowPrice = Number(entry.lowPrice);
+      const openPrice = Number(entry.openPrice);
+      const quoteVolume = Number(entry.quoteVolume);
       if (![priceChangePercent, highPrice, lowPrice].every(Number.isFinite)) {
         logger.warn('Skipping malformed Binance 24hr entry', entry);
         continue;
       }
-      map.set(entry.symbol, { priceChangePercent, highPrice, lowPrice });
+      map.set(entry.symbol, {
+        priceChangePercent,
+        highPrice,
+        lowPrice,
+        openPrice: Number.isFinite(openPrice) ? openPrice : null,
+        quoteVolume: Number.isFinite(quoteVolume) ? quoteVolume : null,
+      });
     }
     return map;
   } finally {

@@ -1,71 +1,12 @@
+const { Input } = require('telegraf');
 const config = require('../config');
 const logger = require('../utils/logger');
 const cardRenderer = require('./cardRenderer');
-const format = require('../utils/format');
-const settingsDb = require('../db/settings');
-const { Input } = require('telegraf');
+const templateEngine = require('./templateEngine');
 
-// Telegram caption uses HTML parse mode (see sendPhoto call below), so
-// anything interpolated from coin data must be HTML-escaped here — this is
-// separate from cardRenderer's escapeXml, which escapes for the SVG instead.
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-// Three-row caption:
-//   <b>Name</b> (SYMBOL) — $price
-//   ▲ pct%                          (own row — omitted for stablecoins)
-//   @PricePing
-//
-// Milestone alerts have no changePct (they fire on a round-number crossing,
-// not a threshold move — see poller.js's checkMilestone), so they get their
-// own second-row wording instead of a percentage that doesn't exist.
-function buildCaption({ coin, price, changePct, direction, alertType, milestoneLevel }) {
-  const priceStr = `$${format.formatPrice(price)}`;
-  const name = escapeHtml(coin.name);
-  const symbol = escapeHtml(coin.symbol);
-
-  const firstLine = `<b>${name}</b> (${symbol}) \u2014 ${priceStr}`;
-  const rows = [firstLine];
-
-  if (alertType === 'milestone') {
-    const arrow = format.directionSymbol(direction);
-    rows.push(`${arrow} Crossed $${format.formatPrice(milestoneLevel)}`);
-  } else if (!coin.isStable && direction && changePct !== null && changePct !== undefined) {
-    const arrow = format.directionSymbol(direction);
-    rows.push(`${arrow} ${format.formatPct(changePct)}`);
-  }
-  rows.push('@PricePing');
-
-  return rows.join('\n');
-}
-
-// Richer caption for manual /post — adds a 24h stat line ahead of the
-// watermark. Distinct from buildCaption on purpose (see cardRenderer.js).
-function buildRichCaption({ coin, price, stats24h }) {
-  const priceStr = `$${format.formatPrice(price)}`;
-  const name = escapeHtml(coin.name);
-  const symbol = escapeHtml(coin.symbol);
-
-  const rows = [`<b>${name}</b> (${symbol}) \u2014 ${priceStr}`];
-  if (!coin.isStable && stats24h) {
-    const direction = stats24h.priceChangePercent >= 0 ? 'up' : 'down';
-    const arrow = format.directionSymbol(direction);
-    rows.push(
-      `24h ${arrow} ${format.formatPct(stats24h.priceChangePercent)}  \u00B7  ` +
-        `H $${format.formatPrice(stats24h.highPrice)}  \u00B7  L $${format.formatPrice(stats24h.lowPrice)}`
-    );
-  }
-  rows.push('@PricePing');
-  return rows.join('\n');
-}
-
-// Generic retrying photo send — shared by threshold alerts, manual posts,
-// milestone alerts, digests, and charts. A single failed send never blocks
-// the rest of a tick or command.
+// Generic retrying photo send — shared by every send path (threshold
+// alerts, manual posts, milestone alerts, charts, rule-driven mirrors). A
+// single failed send never blocks the rest of a tick or command.
 async function sendPhotoWithRetry(telegram, chatId, buffer, filename, caption) {
   const attempts = 1 + config.telegramSendRetries;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -86,12 +27,33 @@ async function sendPhotoWithRetry(telegram, chatId, buffer, filename, caption) {
   return false;
 }
 
-// telegram: a Telegraf `Telegram` API instance (either `bot.telegram` or
-//   `ctx.telegram` — both expose the same sendPhoto/sendMessage methods).
-// alert: { coin, price, changeUsd, changePct, direction }
-// Renders the card and posts it to the primary channel, and to the
-// secondary channel too if one is configured (see /setsecondary).
-async function sendAlert(telegram, alert) {
+async function sendMessageWithRetry(telegram, chatId, text) {
+  const attempts = 1 + config.telegramSendRetries;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
+      return true;
+    } catch (err) {
+      logger.warn(`Message send attempt ${attempt}/${attempts} failed`, { message: err.message });
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  return false;
+}
+
+// alert: { coin, price, changeUsd, changePct, direction, alertType,
+//          milestoneLevel, threshold, cooldownRemainingMs }
+// channel: { name, chatId } — REQUIRED. Automatic alerts resolve this to
+// the default channel in poller.js; manual commands resolve it from an
+// optional trailing arg. There is no more implicit "send everywhere."
+async function sendAlert(telegram, alert, channel) {
+  if (!channel) {
+    logger.error(`sendAlert called with no channel for ${alert.coin.symbol} — dropping`);
+    return false;
+  }
+
   let buffer;
   try {
     buffer = await cardRenderer.renderCard(alert);
@@ -100,26 +62,17 @@ async function sendAlert(telegram, alert) {
     return false;
   }
 
-  const caption = buildCaption(alert);
-  const sentPrimary = await sendPhotoWithRetry(
-    telegram,
-    config.channelId,
-    buffer,
-    `${alert.coin.symbol}.png`,
-    caption
-  );
-
-  const secondaryChannelId = await settingsDb.getSecondaryChannelId();
-  if (secondaryChannelId) {
-    await sendPhotoWithRetry(telegram, secondaryChannelId, buffer, `${alert.coin.symbol}.png`, caption);
-  }
-
-  return sentPrimary;
+  const caption = await templateEngine.renderCaption(alert.alertType || 'threshold', { ...alert, channel });
+  return sendPhotoWithRetry(telegram, channel.chatId, buffer, `${alert.coin.symbol}.png`, caption);
 }
 
-// Manual /post SYMBOL — richer card, always posts to the primary channel
-// (and secondary, if set). Returns true/false like sendAlert.
-async function sendManualPost(telegram, { coin, price, stats24h, candles }) {
+// Manual /post SYMBOL — richer card. channel required, same as sendAlert.
+async function sendManualPost(telegram, { coin, price, stats24h, candles, changeSinceLastPost, alertCountToday }, channel) {
+  if (!channel) {
+    logger.error(`sendManualPost called with no channel for ${coin.symbol} — dropping`);
+    return false;
+  }
+
   let buffer;
   try {
     buffer = await cardRenderer.renderRichCard({ coin, price, stats24h, candles });
@@ -128,15 +81,42 @@ async function sendManualPost(telegram, { coin, price, stats24h, candles }) {
     return false;
   }
 
-  const caption = buildRichCaption({ coin, price, stats24h });
-  const sentPrimary = await sendPhotoWithRetry(telegram, config.channelId, buffer, `${coin.symbol}.png`, caption);
+  const direction = stats24h ? (stats24h.priceChangePercent >= 0 ? 'up' : 'down') : null;
+  const caption = await templateEngine.renderCaption('manual', {
+    coin,
+    price,
+    stats24h,
+    direction,
+    changePct: stats24h ? stats24h.priceChangePercent : null,
+    changeSinceLastPost,
+    alertCountToday,
+    channel,
+  });
 
-  const secondaryChannelId = await settingsDb.getSecondaryChannelId();
-  if (secondaryChannelId) {
-    await sendPhotoWithRetry(telegram, secondaryChannelId, buffer, `${coin.symbol}.png`, caption);
-  }
-
-  return sentPrimary;
+  return sendPhotoWithRetry(telegram, channel.chatId, buffer, `${coin.symbol}.png`, caption);
 }
 
-module.exports = { sendAlert, sendManualPost, sendPhotoWithRetry, buildCaption, buildRichCaption, escapeHtml };
+// /chart and /postchart. channel required.
+async function sendChart(telegram, { coin, buffer, periodLabel }, channel) {
+  if (!channel) {
+    logger.error(`sendChart called with no channel for ${coin.symbol} — dropping`);
+    return false;
+  }
+  const caption = await templateEngine.renderCaption('chart', { coin, periodLabel, channel });
+  return sendPhotoWithRetry(telegram, channel.chatId, buffer, `${coin.symbol}-chart.png`, caption);
+}
+
+// /broadcast — a plain custom text message to a named channel, no image.
+async function sendBroadcast(telegram, message, channel) {
+  if (!channel) return false;
+  return sendMessageWithRetry(telegram, channel.chatId, message);
+}
+
+module.exports = {
+  sendAlert,
+  sendManualPost,
+  sendChart,
+  sendBroadcast,
+  sendPhotoWithRetry,
+  sendMessageWithRetry,
+};

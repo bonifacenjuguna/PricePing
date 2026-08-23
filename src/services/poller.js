@@ -6,12 +6,15 @@ const coinStateDb = require('../db/coinState');
 const alertsLogDb = require('../db/alertsLog');
 const settingsDb = require('../db/settings');
 const heartbeatDb = require('../db/heartbeat');
+const channelsDb = require('../db/channels');
 const events = require('../db/events');
 const telegramSender = require('./telegramSender');
+const rulesEngine = require('./rulesEngine');
 
 let consecutiveFailures = 0;
 let failureAlertSent = false;
 let capNotifiedThisWindow = false;
+let noDefaultChannelWarned = false;
 
 function coinBySymbol(symbol) {
   return config.coins.find((c) => c.symbol === symbol);
@@ -83,6 +86,16 @@ async function tickInner(bot) {
   const paused = await resolvePauseState();
   if (paused) return;
 
+  const defaultChannel = await channelsDb.getDefault();
+  if (!defaultChannel) {
+    if (!noDefaultChannelWarned) {
+      noDefaultChannelWarned = true;
+      logger.error('No default channel configured — alerts have nowhere to go. Run migrations or /addchannel + /setdefaultchannel.');
+    }
+    return;
+  }
+  noDefaultChannelWarned = false;
+
   const [thresholds, coinStates] = await Promise.all([thresholdsDb.getAll(), coinStateDb.getAll()]);
 
   let prices;
@@ -108,9 +121,6 @@ async function tickInner(bot) {
 
     const state = coinStates[coin.symbol] || {};
 
-    // Milestone check runs independently of threshold/mute-for-threshold —
-    // still skipped if the coin itself is muted, since a mute means "don't
-    // post about this coin," full stop.
     if (!muteActive(state.pausedUntil)) {
       const milestone = checkMilestone(coin, price, state.lastMilestone);
       if (milestone) {
@@ -145,7 +155,16 @@ async function tickInner(bot) {
     if (cooldownActive(state.lastAlertAt)) continue;
 
     const direction = changeUsd >= 0 ? 'up' : 'down';
-    toSend.push({ coin, price, changeUsd, changePct, direction, alertType: 'threshold' });
+    toSend.push({
+      coin,
+      price,
+      changeUsd,
+      changePct,
+      direction,
+      alertType: 'threshold',
+      threshold,
+      cooldownRemainingMs: config.cooldownMinutes * 60 * 1000,
+    });
   }
 
   // Hourly send cap — a safety valve against a flash-crash spamming the
@@ -177,12 +196,22 @@ async function tickInner(bot) {
   // Telegram's per-chat rate limit even if every coin alerts in the same
   // tick, and avoids rendering more than one image in memory at a time.
   for (const alert of capped) {
-    const sent = await telegramSender.sendAlert(bot.telegram, alert);
+    const sent = await telegramSender.sendAlert(bot.telegram, alert, defaultChannel);
     if (sent) {
       if (alert.alertType === 'threshold') {
         await coinStateDb.recordAlert(alert.coin.symbol, alert.price);
       }
-      await alertsLogDb.record(alert.coin.symbol, alert.price, alert.changeUsd || 0, alert.direction, alert.alertType);
+      await alertsLogDb.record(
+        alert.coin.symbol,
+        alert.price,
+        alert.changeUsd || 0,
+        alert.direction,
+        alert.alertType,
+        defaultChannel.name
+      );
+      // Automation: any rule watching this trigger fires now, independent
+      // of whether the primary send is the only thing the admin wanted.
+      await rulesEngine.evaluate(bot.telegram, alert);
     }
     if (capped.length > 1) {
       await new Promise((resolve) => setTimeout(resolve, config.sendDelayMs));

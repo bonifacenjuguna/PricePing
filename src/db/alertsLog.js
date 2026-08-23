@@ -1,12 +1,13 @@
 const { pool } = require('./pool');
 
 // alertType: 'threshold' (default, automatic), 'manual' (/post), or
-// 'milestone' (round-number crossing).
-async function record(symbol, price, changeUsd, direction, alertType = 'threshold') {
+// 'milestone' (round-number crossing). channelName: which registered
+// channel this actually went to — defaults to 'main' for backward compat.
+async function record(symbol, price, changeUsd, direction, alertType = 'threshold', channelName = 'main') {
   await pool.query(
-    `INSERT INTO alerts_log (symbol, price, change_usd, direction, alert_type)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [symbol, price, changeUsd, direction, alertType]
+    `INSERT INTO alerts_log (symbol, price, change_usd, direction, alert_type, channel_name)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [symbol, price, changeUsd, direction, alertType, channelName]
   );
 }
 
@@ -59,11 +60,21 @@ async function recentForSymbol(symbol, limit = 10) {
   return rows;
 }
 
+async function countTodayForSymbol(symbol) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count FROM alerts_log
+     WHERE symbol = $1 AND created_at >= date_trunc('day', now())`,
+    [symbol]
+  );
+  return rows[0].count;
+}
+
 module.exports = {
   record,
   countToday,
   countAllTime,
   countLastHour,
+  countTodayForSymbol,
   countPerCoin,
   recent,
   recentForSymbol,

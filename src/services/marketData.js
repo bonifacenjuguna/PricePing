@@ -61,6 +61,8 @@ async function fetch24hrForSymbol(symbol) {
       priceChangePercent,
       highPrice: Math.max(...inverted),
       lowPrice: Math.min(...inverted),
+      openPrice: first,
+      quoteVolume: null, // not derivable from an inverted synthetic pair
     };
   }
 

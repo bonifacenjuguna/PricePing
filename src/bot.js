@@ -11,11 +11,13 @@ const text = require('./handlers/text');
 
 const settingsDb = require('./db/settings');
 const eventsDb = require('./db/events');
+const channelsDb = require('./db/channels');
 
 const scheduler = require('./services/scheduler');
 const memoryWatchdog = require('./services/memoryWatchdog');
 const heartbeatWatchdog = require('./services/heartbeatWatchdog');
 const digest = require('./services/digest');
+const automationScheduler = require('./services/automationScheduler');
 const coinRegistry = require('./services/coinRegistry');
 const cardRenderer = require('./services/cardRenderer');
 
@@ -30,31 +32,45 @@ bot.use(accessGate());
 // --- Commands ---
 bot.start(commands.start);
 bot.help(commands.help);
+bot.command('commands', commands.hubCmd);
 bot.command('status', commands.home);
 bot.command('prices', commands.pricesCmd);
+bot.command('post', commands.postCmd);
+bot.command('chart', commands.chartCmd);
+bot.command('postchart', commands.postChartCmd);
 bot.command('thresholds', commands.thresholdsCmd);
 bot.command('setthreshold', commands.setThreshold);
 bot.command('pause', commands.pause);
 bot.command('resume', commands.resume);
 bot.command('mute', commands.mute);
 bot.command('unmute', commands.unmute);
-bot.command('test', commands.testAlert);
-bot.command('post', commands.postCmd);
-bot.command('chart', commands.chartCmd);
-bot.command('postchart', commands.postChartCmd);
 bot.command('addcoin', commands.addCoinCmd);
 bot.command('history', commands.historyCmd);
 bot.command('stats', commands.statsCmd);
 bot.command('settings', commands.settingsCmd);
-bot.command('setsecondary', commands.setSecondaryCmd);
-bot.command('clearsecondary', commands.clearSecondaryCmd);
+bot.command('channels', commands.channelsListCmd);
+bot.command('addchannel', commands.addChannelCmd);
+bot.command('removechannel', commands.removeChannelCmd);
+bot.command('setdefaultchannel', commands.setDefaultChannelCmd);
+bot.command('setcaption', commands.setCaptionCmd);
+bot.command('previewcaption', commands.previewCaptionCmd);
+bot.command('resetcaption', commands.resetCaptionCmd);
+bot.command('variables', commands.variablesCmd);
+bot.command('setvar', commands.setVarCmd);
+bot.command('delvar', commands.delVarCmd);
+bot.command('schedule', commands.scheduleCmd);
+bot.command('schedules', commands.schedulesListCmd);
+bot.command('addrule', commands.ruleCmd);
+bot.command('rules', commands.rulesListCmd);
+bot.command('broadcast', commands.broadcastCmd);
+bot.command('test', commands.testAlert);
 bot.command('whoami', commands.whoami);
 bot.command('digestnow', commands.digestNowCmd);
 
 // --- Inline button taps ---
 bot.on('callback_query', callbacks.onCallback);
 
-// --- Persistent bottom keyboard (BBTB) taps + bare symbols + anything else typed ---
+// --- Persistent bottom keyboard (BBTB) taps + guided input + bare symbols + anything else typed ---
 bot.on('text', text.onText);
 
 bot.catch((err, ctx) => {
@@ -89,24 +105,28 @@ async function sendAnnouncementIfNeeded() {
 // ---------------------------------------------------------------------------
 // Registers the slash-command menu with Telegram (the list that pops up
 // when the admin types "/" in the chat). Safe to call on every boot —
-// setMyCommands just overwrites whatever was registered before. Kept to a
-// curated, most-used subset — every command below is still callable even
-// if it's not in this popup list (see bot.command(...) registrations above).
+// setMyCommands just overwrites whatever was registered before. /start is
+// deliberately first — it's the natural entry point for anyone opening the
+// chat for the first time. Kept to a curated, most-used subset — every
+// command is still callable even if it's not in this popup list (see the
+// bot.command(...) registrations above, and /help for the complete list).
 // ---------------------------------------------------------------------------
 async function registerBotCommands() {
   const commandList = [
+    { command: 'start', description: 'Welcome + main menu' },
+    { command: 'commands', description: 'Open the full button-driven control panel' },
     { command: 'status', description: 'Bot status, uptime, and alerts today' },
     { command: 'prices', description: 'Current price for every tracked coin' },
-    { command: 'post', description: 'Post a price update to the channel now' },
+    { command: 'post', description: 'Post a price update to a channel now' },
     { command: 'chart', description: 'Send yourself a price chart' },
     { command: 'thresholds', description: 'View all alert thresholds' },
     { command: 'setthreshold', description: 'Change a threshold: SYMBOL AMOUNT [pct]' },
     { command: 'pause', description: 'Stop posting alerts (optionally: /pause 2h)' },
     { command: 'resume', description: 'Resume posting alerts' },
     { command: 'mute', description: 'Silence one coin: SYMBOL [duration]' },
-    { command: 'history', description: 'Recent alerts for one coin' },
-    { command: 'addcoin', description: 'Track a new coin: SYMBOL PAIR #COLOR' },
-    { command: 'test', description: 'Send a sample alert card to the channel' },
+    { command: 'channels', description: 'List registered channels' },
+    { command: 'variables', description: 'List caption variables' },
+    { command: 'test', description: 'Advanced test menu' },
     { command: 'help', description: 'Show the full command list' },
   ];
 
@@ -133,6 +153,7 @@ async function selfTestRenderPipeline() {
       changeUsd: 1,
       changePct: 1,
       direction: 'up',
+      alertType: 'threshold',
     });
     logger.info('Startup self-test: card render pipeline OK');
   } catch (err) {
@@ -147,6 +168,18 @@ async function selfTestRenderPipeline() {
     } catch {
       /* non-fatal — if we can't even DM the admin, logging is all we have */
     }
+  }
+}
+
+// Boot-time sanity check: a default channel must exist for automatic
+// alerts to have anywhere to go. migrate.js seeds one from CHANNEL_ID on
+// every deploy, so this should never actually fire in normal operation —
+// it's here so a skipped migration step fails loudly instead of silently.
+async function checkDefaultChannel() {
+  const defaultChannel = await channelsDb.getDefault();
+  if (!defaultChannel) {
+    logger.error('No default channel found in the database — did you run `npm run migrate`? Automatic alerts have nowhere to go.');
+    await eventsDb.record('no_default_channel', 'Boot check found no default channel configured');
   }
 }
 
@@ -166,6 +199,7 @@ async function start() {
   // back in config.coins before the poller's first tick.
   await coinRegistry.loadCustomCoins();
 
+  await checkDefaultChannel();
   await selfTestRenderPipeline();
 
   if (config.webhookUrl) {
@@ -191,6 +225,7 @@ async function start() {
   memoryWatchdog.init(bot);
   heartbeatWatchdog.init(bot);
   digest.init(bot);
+  automationScheduler.init(bot);
 
   logger.info(`PricePing v${require('../package.json').version} is running`);
 }
@@ -203,6 +238,7 @@ async function shutdown(signal) {
   scheduler.stop();
   heartbeatWatchdog.stop();
   digest.stop();
+  automationScheduler.stop();
   try {
     bot.stop(signal);
   } catch {
