@@ -3,7 +3,9 @@
 //
 // This is the ONLY part of the project that needs internet access at
 // asset-prep time — the bot itself never fetches or converts logos at
-// runtime (see cardRenderer.js, which just reads the local .png).
+// runtime for the 10 built-in coins (see cardRenderer.js, which just reads
+// the local .png). Coins added later via /addcoin DO fetch at runtime,
+// through the same resolveLogoSvg() helper — see services/coinRegistry.js.
 //
 // If a download fails for any reason (network unavailable, source moved,
 // symbol not in the icon set), this script falls back to generating a
@@ -19,57 +21,17 @@ const sharp = require('sharp');
 // are necessarily resolved. config.js hard-exits if those are missing;
 // coins.js has no env-var dependency at all.
 const { coins, logosDir } = require('../src/coins');
+const { resolveLogoSvg } = require('../src/utils/logoFetch');
 
 const LOGO_SIZE = 256;
-const REQUEST_TIMEOUT_MS = 8000;
-
-// Free, MIT-licensed icon set commonly used for this exact purpose.
-// One flat-color SVG per symbol, lowercase filename.
-function iconUrlFor(symbol) {
-  return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${symbol.toLowerCase()}.svg`;
-}
-
-async function downloadSvg(symbol) {
-  const url = iconUrlFor(symbol);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    if (!text.includes('<svg')) throw new Error('response was not an SVG document');
-    return text;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// Offline-safe fallback: a flat circle in the coin's brand color with the
-// first 1-2 letters of the symbol as a monogram. No network needed.
-function fallbackSvg(coin) {
-  const initials = coin.symbol.slice(0, coin.symbol.length > 3 ? 2 : 3);
-  const textColor = coin.color.toUpperCase() === '#FFFFFF' ? '#111111' : '#FFFFFF';
-  return `
-<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="128" cy="128" r="120" fill="${coin.color}" />
-  <text x="128" y="150" font-family="DejaVu Sans, sans-serif" font-size="88" font-weight="700"
-        fill="${textColor}" text-anchor="middle">${initials}</text>
-</svg>`;
-}
 
 async function processCoin(coin) {
   const svgPath = path.join(logosDir, `${coin.symbol.toLowerCase()}.svg`);
   const pngPath = path.join(logosDir, `${coin.symbol.toLowerCase()}.png`);
 
-  let svgContent;
-  let source;
-  try {
-    svgContent = await downloadSvg(coin.symbol);
-    source = 'downloaded';
-  } catch (err) {
-    console.warn(`  [${coin.symbol}] download failed (${err.message}) — using offline fallback logo`);
-    svgContent = fallbackSvg(coin);
-    source = 'fallback';
+  const { svgContent, source, error } = await resolveLogoSvg(coin);
+  if (source === 'fallback') {
+    console.warn(`  [${coin.symbol}] download failed (${error}) — using offline fallback logo`);
   }
 
   fs.writeFileSync(svgPath, svgContent, 'utf8');

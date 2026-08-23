@@ -39,6 +39,11 @@ async function onCallback(ctx) {
       const symbol = data.split(':')[2];
       return await commands.sendTestAlert(ctx, symbol);
     }
+
+    if (data.startsWith('action:undothreshold:')) {
+      const symbol = data.split(':')[2];
+      return await commands.undoThreshold(ctx, symbol);
+    }
   } catch (err) {
     logger.error('Error handling callback query', { data, message: err.message });
     try {

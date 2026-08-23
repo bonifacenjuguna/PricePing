@@ -8,17 +8,23 @@ const config = require('../src/config');
 async function main() {
   const pool = new Pool({ connectionString: config.databaseUrl });
 
-  const sqlPath = path.join(__dirname, '..', 'migrations', '001_init.sql');
-  const sql = fs.readFileSync(sqlPath, 'utf8');
+  const migrationsDir = path.join(__dirname, '..', 'migrations');
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort(); // filenames are numerically prefixed (001_, 002_, ...) so lexical sort == apply order
 
-  console.log('Applying schema...');
-  await pool.query(sql);
+  for (const file of files) {
+    console.log(`Applying ${file}...`);
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    await pool.query(sql);
+  }
 
   console.log('Seeding default thresholds (only for symbols not already set)...');
   for (const [symbol, thresholdUsd] of Object.entries(config.defaultThresholds)) {
     await pool.query(
-      `INSERT INTO thresholds (symbol, threshold_usd)
-       VALUES ($1, $2)
+      `INSERT INTO thresholds (symbol, threshold_usd, threshold_type)
+       VALUES ($1, $2, 'usd')
        ON CONFLICT (symbol) DO NOTHING`,
       [symbol, thresholdUsd]
     );

@@ -14,6 +14,10 @@ const eventsDb = require('./db/events');
 
 const scheduler = require('./services/scheduler');
 const memoryWatchdog = require('./services/memoryWatchdog');
+const heartbeatWatchdog = require('./services/heartbeatWatchdog');
+const digest = require('./services/digest');
+const coinRegistry = require('./services/coinRegistry');
+const cardRenderer = require('./services/cardRenderer');
 
 const { pool } = require('./db/pool');
 const { redis } = require('./db/redis');
@@ -32,12 +36,25 @@ bot.command('thresholds', commands.thresholdsCmd);
 bot.command('setthreshold', commands.setThreshold);
 bot.command('pause', commands.pause);
 bot.command('resume', commands.resume);
+bot.command('mute', commands.mute);
+bot.command('unmute', commands.unmute);
 bot.command('test', commands.testAlert);
+bot.command('post', commands.postCmd);
+bot.command('chart', commands.chartCmd);
+bot.command('postchart', commands.postChartCmd);
+bot.command('addcoin', commands.addCoinCmd);
+bot.command('history', commands.historyCmd);
+bot.command('stats', commands.statsCmd);
+bot.command('settings', commands.settingsCmd);
+bot.command('setsecondary', commands.setSecondaryCmd);
+bot.command('clearsecondary', commands.clearSecondaryCmd);
+bot.command('whoami', commands.whoami);
+bot.command('digestnow', commands.digestNowCmd);
 
 // --- Inline button taps ---
 bot.on('callback_query', callbacks.onCallback);
 
-// --- Persistent bottom keyboard (BBTB) taps + anything else typed ---
+// --- Persistent bottom keyboard (BBTB) taps + bare symbols + anything else typed ---
 bot.on('text', text.onText);
 
 bot.catch((err, ctx) => {
@@ -72,16 +89,23 @@ async function sendAnnouncementIfNeeded() {
 // ---------------------------------------------------------------------------
 // Registers the slash-command menu with Telegram (the list that pops up
 // when the admin types "/" in the chat). Safe to call on every boot —
-// setMyCommands just overwrites whatever was registered before.
+// setMyCommands just overwrites whatever was registered before. Kept to a
+// curated, most-used subset — every command below is still callable even
+// if it's not in this popup list (see bot.command(...) registrations above).
 // ---------------------------------------------------------------------------
 async function registerBotCommands() {
   const commandList = [
     { command: 'status', description: 'Bot status, uptime, and alerts today' },
     { command: 'prices', description: 'Current price for every tracked coin' },
+    { command: 'post', description: 'Post a price update to the channel now' },
+    { command: 'chart', description: 'Send yourself a price chart' },
     { command: 'thresholds', description: 'View all alert thresholds' },
-    { command: 'setthreshold', description: 'Change a threshold: SYMBOL AMOUNT' },
-    { command: 'pause', description: 'Stop posting alerts to the channel' },
+    { command: 'setthreshold', description: 'Change a threshold: SYMBOL AMOUNT [pct]' },
+    { command: 'pause', description: 'Stop posting alerts (optionally: /pause 2h)' },
     { command: 'resume', description: 'Resume posting alerts' },
+    { command: 'mute', description: 'Silence one coin: SYMBOL [duration]' },
+    { command: 'history', description: 'Recent alerts for one coin' },
+    { command: 'addcoin', description: 'Track a new coin: SYMBOL PAIR #COLOR' },
     { command: 'test', description: 'Send a sample alert card to the channel' },
     { command: 'help', description: 'Show the full command list' },
   ];
@@ -95,6 +119,38 @@ async function registerBotCommands() {
 }
 
 // ---------------------------------------------------------------------------
+// Startup self-test: renders one card fully in memory (never sent anywhere)
+// to confirm the font/sharp/logo pipeline actually works before the first
+// real alert silently depends on it. DMs the admin if it fails so a broken
+// image pipeline is caught at boot, not at 3am when BTC finally moves.
+// ---------------------------------------------------------------------------
+async function selfTestRenderPipeline() {
+  try {
+    const sampleCoin = config.coins[0];
+    await cardRenderer.renderCard({
+      coin: sampleCoin,
+      price: 100,
+      changeUsd: 1,
+      changePct: 1,
+      direction: 'up',
+    });
+    logger.info('Startup self-test: card render pipeline OK');
+  } catch (err) {
+    logger.error('Startup self-test FAILED — card rendering is broken', { message: err.message });
+    await eventsDb.record('selftest_failed', err.message);
+    try {
+      await bot.telegram.sendMessage(
+        config.adminId,
+        `\u26A0\uFE0F Startup self-test failed: card rendering is broken (${err.message}). ` +
+          `Alerts will likely fail to send until this is fixed.`
+      );
+    } catch {
+      /* non-fatal — if we can't even DM the admin, logging is all we have */
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP server: webhook endpoint + a plain health check for Railway.
 // ---------------------------------------------------------------------------
 const app = express();
@@ -104,6 +160,13 @@ app.get('/health', (req, res) => res.status(200).send('ok'));
 
 async function start() {
   await eventsDb.record('boot', 'Process starting');
+
+  // Must happen before the scheduler starts and before commands can be
+  // used — anything added via /addcoin in a previous session needs to be
+  // back in config.coins before the poller's first tick.
+  await coinRegistry.loadCustomCoins();
+
+  await selfTestRenderPipeline();
 
   if (config.webhookUrl) {
     const path = config.webhookPath;
@@ -126,8 +189,10 @@ async function start() {
 
   scheduler.init(bot);
   memoryWatchdog.init(bot);
+  heartbeatWatchdog.init(bot);
+  digest.init(bot);
 
-  logger.info('PricePing is running');
+  logger.info(`PricePing v${require('../package.json').version} is running`);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +201,8 @@ async function start() {
 async function shutdown(signal) {
   logger.info(`Received ${signal}, shutting down gracefully`);
   scheduler.stop();
+  heartbeatWatchdog.stop();
+  digest.stop();
   try {
     bot.stop(signal);
   } catch {

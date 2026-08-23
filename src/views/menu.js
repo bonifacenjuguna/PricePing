@@ -1,12 +1,25 @@
 const config = require('../config');
 const format = require('../utils/format');
+const { formatRemaining } = require('../utils/duration');
 
 const HOME_ROW = [{ text: '\uD83C\uDFE0 Home', callback_data: 'nav:home' }]; // 🏠
 
 // ---------- Home ----------
-function home({ paused, uptimeSeconds, alertsToday, lastEvent }) {
+function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat }) {
   const uptimeStr = formatUptime(uptimeSeconds);
-  const statusLine = paused ? '\u23F8 Paused' : '\uD83D\uDFE2 Running'; // ⏸ / 🟢
+
+  let statusLine = '\uD83D\uDFE2 Running'; // 🟢
+  if (paused && pausedUntil) {
+    const remaining = new Date(pausedUntil).getTime() - Date.now();
+    statusLine = `\u23F8 Paused (resumes in ${formatRemaining(remaining)})`; // ⏸
+  } else if (paused) {
+    statusLine = '\u23F8 Paused (indefinitely)';
+  }
+
+  let heartbeatLine = '';
+  if (heartbeat && heartbeat.lastTickAt) {
+    heartbeatLine = `Last tick    ${format.timeAgo(heartbeat.lastTickAt)} (${heartbeat.lastTickMs}ms)\n`;
+  }
 
   const text =
     `PricePing \u2014 status\n` +
@@ -16,6 +29,8 @@ function home({ paused, uptimeSeconds, alertsToday, lastEvent }) {
     `Alerts today  ${alertsToday}\n` +
     `Poll interval ${config.pollIntervalMs / 1000}s\n` +
     `Cooldown      ${config.cooldownMinutes}m per coin\n` +
+    `Hourly cap    ${config.maxAlertsPerHour} alerts\n` +
+    heartbeatLine +
     (lastEvent
       ? `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
         `Last event: ${lastEvent.type} \u2014 ${format.timeAgo(lastEvent.created_at)}`
@@ -28,7 +43,10 @@ function home({ paused, uptimeSeconds, alertsToday, lastEvent }) {
         : { text: '\u23F8 Pause', callback_data: 'action:pause' }, // ⏸
       { text: '\uD83E\uDDEA Test alert', callback_data: 'nav:test' }, // 🧪
     ],
-    [{ text: '\u2699 Settings', callback_data: 'nav:settings' }], // ⚙
+    [
+      { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' }, // 📊
+      { text: '\u2699 Settings', callback_data: 'nav:settings' }, // ⚙
+    ],
   ];
 
   return { text, keyboard };
@@ -65,15 +83,17 @@ function thresholds(thresholdMap) {
   const lines = config.coins
     .map((coin) => {
       const t = thresholdMap[coin.symbol];
-      const tStr = t === undefined ? '\u2014' : `$${format.formatChangeUsd(t)}`;
+      if (!t) return `${coin.symbol.padEnd(5, ' ')} \u2014`;
+      const tStr = t.type === 'pct' ? `${t.value}%` : `$${format.formatChangeUsd(t.value)}`;
       return `${coin.symbol.padEnd(5, ' ')} ${tStr}`;
     })
     .join('\n');
 
   const text =
     `Alert thresholds\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n` +
-    `To change one: /setthreshold SYMBOL AMOUNT\n` +
-    `Example: /setthreshold BTC 400`;
+    `To change one: /setthreshold SYMBOL AMOUNT [pct]\n` +
+    `Example: /setthreshold BTC 400\n` +
+    `Or: /setthreshold BTC 2 pct  (2% move)`;
 
   const keyboard = [HOME_ROW];
   return { text, keyboard };
@@ -92,21 +112,25 @@ function stats({ today, allTime, perCoin }) {
     `Today      ${today}\n` +
     `All-time   ${allTime}\n` +
     `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
-    `Per coin (all-time):\n${perCoinLines}`;
+    `Per coin (all-time):\n${perCoinLines}\n\n` +
+    `Use /history SYMBOL for a per-coin breakdown.`;
 
   const keyboard = [HOME_ROW];
   return { text, keyboard };
 }
 
 // ---------- Settings ----------
-function settings() {
+function settings({ secondaryChannelId }) {
   const text =
     `Settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
-    `Poll interval   ${config.pollIntervalMs / 1000}s\n` +
-    `Cooldown        ${config.cooldownMinutes}m per coin\n` +
-    `Memory limit    ${config.memoryLimitMb}MB\n\n` +
-    `These are set via environment variables on Railway ` +
-    `(POLL_INTERVAL_MS, COOLDOWN_MINUTES, MEMORY_LIMIT_MB) and take effect on next restart.`;
+    `Poll interval     ${config.pollIntervalMs / 1000}s\n` +
+    `Cooldown          ${config.cooldownMinutes}m per coin\n` +
+    `Hourly send cap   ${config.maxAlertsPerHour}\n` +
+    `Memory limit      ${config.memoryLimitMb}MB\n` +
+    `Daily digest      ${config.digestEnabled ? `${config.digestHourUtc}:00 UTC` : 'disabled'}\n` +
+    `Secondary channel ${secondaryChannelId || 'not set'}\n\n` +
+    `Poll/cooldown/cap/memory/digest are environment variables (take effect on next restart). ` +
+    `Secondary channel is live \u2014 set with /setsecondary CHANNEL_ID, clear with /clearsecondary.`;
   const keyboard = [HOME_ROW];
   return { text, keyboard };
 }

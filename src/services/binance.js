@@ -3,6 +3,12 @@ const logger = require('../utils/logger');
 const BASE_URL = 'https://api.binance.com';
 const REQUEST_TIMEOUT_MS = 10000;
 
+function withTimeout() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return { signal: controller.signal, clear: () => clearTimeout(timeout) };
+}
+
 // Uses /api/v3/ticker/price with a batched `symbols` param — one HTTP call
 // returns every pair at once. This endpoint requires no API key and has a
 // long-stable response shape: [{ symbol, price }, ...]. Weight cost for a
@@ -17,12 +23,10 @@ async function fetchPrices(pairs) {
 
   const symbolsParam = encodeURIComponent(JSON.stringify(pairs));
   const url = `${BASE_URL}/api/v3/ticker/price?symbols=${symbolsParam}`;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const { signal, clear } = withTimeout();
 
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`Binance responded ${res.status}: ${body.slice(0, 200)}`);
@@ -47,8 +51,71 @@ async function fetchPrices(pairs) {
     }
     return map;
   } finally {
-    clearTimeout(timeout);
+    clear();
   }
 }
 
-module.exports = { fetchPrices };
+// Batched 24hr rolling stats — used for the manual /post card (24h high/
+// low/%), the daily digest, and "big mover of the day". One call for every
+// pair, same batching pattern as fetchPrices.
+// returns: Map<pair, { priceChangePercent, highPrice, lowPrice }>
+async function fetch24hrStats(pairs) {
+  if (!pairs.length) return new Map();
+
+  const symbolsParam = encodeURIComponent(JSON.stringify(pairs));
+  const url = `${BASE_URL}/api/v3/ticker/24hr?symbols=${symbolsParam}`;
+  const { signal, clear } = withTimeout();
+
+  try {
+    const res = await fetch(url, { signal });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Binance responded ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error('Unexpected Binance response shape (expected array)');
+
+    const map = new Map();
+    for (const entry of data) {
+      if (!entry || typeof entry.symbol !== 'string') continue;
+      const priceChangePercent = Number(entry.priceChangePercent);
+      const highPrice = Number(entry.highPrice);
+      const lowPrice = Number(entry.lowPrice);
+      if (![priceChangePercent, highPrice, lowPrice].every(Number.isFinite)) {
+        logger.warn('Skipping malformed Binance 24hr entry', entry);
+        continue;
+      }
+      map.set(entry.symbol, { priceChangePercent, highPrice, lowPrice });
+    }
+    return map;
+  } finally {
+    clear();
+  }
+}
+
+// Candlestick data for charts/sparklines. interval e.g. '1m','15m','1h','4h','1d'.
+// returns: array of { openTime, close } ordered oldest -> newest.
+async function fetchKlines(pair, interval, limit) {
+  const url = `${BASE_URL}/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${encodeURIComponent(
+    interval
+  )}&limit=${encodeURIComponent(limit)}`;
+  const { signal, clear } = withTimeout();
+
+  try {
+    const res = await fetch(url, { signal });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Binance responded ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error('Unexpected Binance klines response shape (expected array)');
+
+    return data
+      .map((row) => ({ openTime: row[0], close: Number(row[4]) }))
+      .filter((row) => Number.isFinite(row.close));
+  } finally {
+    clear();
+  }
+}
+
+module.exports = { fetchPrices, fetch24hrStats, fetchKlines };

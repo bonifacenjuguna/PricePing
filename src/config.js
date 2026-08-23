@@ -37,6 +37,17 @@ module.exports = {
   sendDelayMs: Number(process.env.SEND_DELAY_MS) || 250,
   telegramSendRetries: 1,
 
+  // --- v0.2.0 additions ---
+  maxAlertsPerHour: Number(process.env.MAX_ALERTS_PER_HOUR) || 20,
+
+  digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 9),
+  digestEnabled: (process.env.DIGEST_ENABLED ?? 'true') === 'true',
+
+  heartbeatCheckIntervalMs: Number(process.env.HEARTBEAT_CHECK_INTERVAL_MS) || 5 * 60 * 1000,
+  heartbeatStaleMultiplier: Number(process.env.HEARTBEAT_STALE_MULTIPLIER) || 3,
+
+  defaultMuteMs: 60 * 60 * 1000, // /mute SYMBOL with no duration given
+
   coins,
   defaultThresholds,
 
