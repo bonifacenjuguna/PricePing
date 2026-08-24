@@ -2,6 +2,7 @@ const menu = require('../views/menu');
 const commands = require('../handlers/commands');
 const settingsDb = require('../db/settings');
 const logger = require('../utils/logger');
+const recentCoins = require('../services/recentCoins');
 
 // callback_data is always colon-separated: prefix:action:...args
 async function onCallback(ctx) {
@@ -28,8 +29,10 @@ async function onCallback(ctx) {
           return commands.statsCmd(ctx);
         case 'settings':
           return commands.settingsCmd(ctx);
-        case 'test':
-          return ctx.reply(menu.testPicker().text, { reply_markup: { inline_keyboard: menu.testPicker().keyboard } });
+        case 'test': {
+          const screen = menu.testPicker(recentCoins.getRecent());
+          return ctx.reply(screen.text, { reply_markup: { inline_keyboard: screen.keyboard } });
+        }
         case 'postmenu':
           return commands.postMenuScreen(ctx);
         case 'chartmenu':
@@ -50,6 +53,12 @@ async function onCallback(ctx) {
           return commands.schedulesScreen(ctx);
         case 'rules':
           return commands.rulesScreen(ctx);
+        case 'coinsettings':
+          return commands.coinSettingsMenuScreen(ctx);
+        case 'reset':
+          return commands.resetMenuScreen(ctx);
+        case 'broadcastmenu':
+          return commands.broadcastMenuScreen(ctx);
         default:
           return undefined;
       }
@@ -76,15 +85,45 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- threshold:edit|inc|dec:SYMBOL ----
+    // ---- threshold:inc|dec:SYMBOL (edit screen folded into coin:settings) ----
     if (ns === 'threshold') {
       if (a1 === 'edit') {
         await ctx.answerCbQuery();
-        return commands.thresholdEditScreen(ctx, a2);
+        return commands.coinSettingsScreen(ctx, a2);
       }
       if (a1 === 'inc' || a1 === 'dec') {
-        await ctx.answerCbQuery();
         return commands.thresholdAdjust(ctx, a2, a1);
+      }
+      return undefined;
+    }
+
+    // ---- coin:settings:SYMBOL ----
+    if (ns === 'coin') {
+      if (a1 === 'settings') {
+        await ctx.answerCbQuery();
+        return commands.coinSettingsScreen(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- milestone:inc|dec|toggle:SYMBOL ----
+    if (ns === 'milestone') {
+      if (a1 === 'inc' || a1 === 'dec') {
+        return commands.milestoneAdjust(ctx, a2, a1);
+      }
+      if (a1 === 'toggle') {
+        return commands.milestoneToggle(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- cooldown:inc|dec|reset:SYMBOL ----
+    if (ns === 'cooldown') {
+      if (a1 === 'inc' || a1 === 'dec') {
+        return commands.cooldownAdjust(ctx, a2, a1);
+      }
+      if (a1 === 'reset') {
+        return commands.cooldownResetBtn(ctx, a2);
       }
       return undefined;
     }
@@ -116,6 +155,7 @@ async function onCallback(ctx) {
     if (ns === 'post') {
       if (a1 === 'coin') {
         await ctx.answerCbQuery();
+        recentCoins.noteCoin(a2);
         return commands.postChannelScreen(ctx, a2);
       }
       if (a1 === 'send') {
@@ -128,6 +168,7 @@ async function onCallback(ctx) {
     if (ns === 'chart') {
       if (a1 === 'coin') {
         await ctx.answerCbQuery();
+        recentCoins.noteCoin(a2);
         return commands.chartPeriodScreen(ctx, a2);
       }
       if (a1 === 'period') {
@@ -157,6 +198,14 @@ async function onCallback(ctx) {
       return undefined;
     }
 
+    // ---- broadcast:pick:CHANNEL ----
+    if (ns === 'broadcast') {
+      if (a1 === 'pick') {
+        return commands.broadcastPick(ctx, a2);
+      }
+      return undefined;
+    }
+
     // ---- caption:type|edit|preview|reset:TYPE ----
     if (ns === 'caption') {
       if (a1 === 'type') {
@@ -175,7 +224,7 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- schedule:add|del ----
+    // ---- schedule:add|del|edit ----
     if (ns === 'schedule') {
       if (a1 === 'add') {
         return commands.scheduleAddStart(ctx);
@@ -183,16 +232,45 @@ async function onCallback(ctx) {
       if (a1 === 'del') {
         return commands.scheduleDel(ctx, a2);
       }
+      if (a1 === 'edit') {
+        return commands.scheduleEditStart(ctx, a2);
+      }
       return undefined;
     }
 
-    // ---- rule:add|del ----
+    // ---- rule:add|del|edit ----
     if (ns === 'rule') {
       if (a1 === 'add') {
         return commands.ruleAddStart(ctx);
       }
       if (a1 === 'del') {
         return commands.ruleDel(ctx, a2);
+      }
+      if (a1 === 'edit') {
+        return commands.ruleEditStart(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- addcoin:confirm|cancel ----
+    if (ns === 'addcoin') {
+      if (a1 === 'confirm') {
+        return commands.addCoinConfirmExecute(ctx);
+      }
+      if (a1 === 'cancel') {
+        return commands.addCoinCancel(ctx);
+      }
+      return undefined;
+    }
+
+    // ---- reset:confirm|execute:TYPE ----
+    if (ns === 'reset') {
+      if (a1 === 'confirm') {
+        await ctx.answerCbQuery();
+        return commands.resetConfirmScreen(ctx, a2);
+      }
+      if (a1 === 'execute') {
+        return commands.resetExecute(ctx, a2);
       }
       return undefined;
     }
@@ -212,7 +290,6 @@ async function onCallback(ctx) {
         return commands.testDestinationScreen(ctx, a2, a3, a4);
       }
       if (a1 === 'send') {
-        // data: test:send:SYMBOL:TYPE:VALUECODE:DEST — 6 parts, need the 6th
         const dest = parts[5];
         return commands.testExecute(ctx, a2, a3, a4, dest);
       }

@@ -11,18 +11,39 @@ function chunk(arr, size) {
   return rows;
 }
 
-// Reusable coin-grid picker. onDataPrefix + symbol builds each button's
-// callback_data, e.g. prefix "post:coin" -> "post:coin:BTC".
-function coinGrid(prefix, extraRows = []) {
-  const buttons = config.coins.map((c) => ({ text: c.symbol, callback_data: `${prefix}:${c.symbol}` }));
-  return [...chunk(buttons, 3), ...extraRows, HOME_ROW];
+// Standard footer for any screen: one "Back" to its logical parent, then
+// Home. Used consistently so navigation depth is predictable everywhere.
+function backRow(parentCallback) {
+  return [{ text: '\u25C0 Back', callback_data: parentCallback }];
+}
+function footer(parentCallback) {
+  return [backRow(parentCallback), HOME_ROW];
 }
 
-// Reusable channel picker, shown after a coin/action is chosen. Marks the
-// default channel. "prefix" already includes everything decided so far,
-// e.g. "post:send:BTC" -> "post:send:BTC:main".
-function channelPicker(prefix, channels, extraRows = []) {
-  const buttons = channels.map((c) => ({
+// Reusable coin-grid picker. onDataPrefix + symbol builds each button's
+// callback_data, e.g. prefix "post:coin" -> "post:coin:BTC". If
+// recentSymbols is non-empty, a "recently used" row is prepended above the
+// full alphabetical grid so common coins aren't buried once /addcoin grows
+// the list.
+function coinGrid(prefix, { extraRows = [], parentCallback = 'nav:hub', recentSymbols = [] } = {}) {
+  const recentRow = recentSymbols.length
+    ? [recentSymbols.map((s) => ({ text: `\uD83D\uDD52 ${s}`, callback_data: `${prefix}:${s}` }))]
+    : [];
+  const buttons = config.coins.map((c) => ({ text: c.symbol, callback_data: `${prefix}:${c.symbol}` }));
+  return [...recentRow, ...chunk(buttons, 3), ...extraRows, ...footer(parentCallback)];
+}
+
+// Reusable channel picker. "prefix" already includes everything decided so
+// far, e.g. "post:send:BTC" -> "post:send:BTC:main". preferredFirst, if
+// given, reorders that channel name to the front (used to surface the
+// last-used test destination).
+function channelPicker(prefix, channels, extraRows = [], preferredFirst = null) {
+  let ordered = channels;
+  if (preferredFirst) {
+    const idx = ordered.findIndex((c) => c.name === preferredFirst);
+    if (idx > 0) ordered = [ordered[idx], ...ordered.slice(0, idx), ...ordered.slice(idx + 1)];
+  }
+  const buttons = ordered.map((c) => ({
     text: c.isDefault ? `\u2B50 ${c.name}` : c.name,
     callback_data: `${prefix}:${c.name}`,
   }));
@@ -45,10 +66,10 @@ function durationPicker(prefix, extraRows = []) {
 function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat }) {
   const uptimeStr = formatUptime(uptimeSeconds);
 
-  let statusLine = '\uD83D\uDFE2 Running'; // 🟢
+  let statusLine = '\uD83D\uDFE2 Running';
   if (paused && pausedUntil) {
     const remaining = new Date(pausedUntil).getTime() - Date.now();
-    statusLine = `\u23F8 Paused (resumes in ${formatRemaining(remaining)})`; // ⏸
+    statusLine = `\u23F8 Paused (resumes in ${formatRemaining(remaining)})`;
   } else if (paused) {
     statusLine = '\u23F8 Paused (indefinitely)';
   }
@@ -65,7 +86,7 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
     `Uptime        ${uptimeStr}\n` +
     `Alerts today  ${alertsToday}\n` +
     `Poll interval ${config.pollIntervalMs / 1000}s\n` +
-    `Cooldown      ${config.cooldownMinutes}m per coin\n` +
+    `Cooldown      ${config.cooldownMinutes}m per coin (default)\n` +
     `Hourly cap    ${config.maxAlertsPerHour} alerts\n` +
     heartbeatLine +
     (lastEvent
@@ -76,13 +97,13 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
   const keyboard = [
     [
       paused
-        ? { text: '\u25B6 Resume', callback_data: 'action:resume' } // ▶
-        : { text: '\u23F8 Pause', callback_data: 'nav:pausemenu' }, // ⏸
-      { text: '\uD83E\uDDEA Test', callback_data: 'nav:test' }, // 🧪
+        ? { text: '\u25B6 Resume', callback_data: 'action:resume' }
+        : { text: '\u23F8 Pause', callback_data: 'nav:pausemenu' },
+      { text: '\uD83E\uDDEA Test', callback_data: 'nav:test' },
     ],
     [
-      { text: '\uD83D\uDCB0 Post', callback_data: 'nav:postmenu' }, // 💰
-      { text: '\uD83D\uDCC8 Chart', callback_data: 'nav:chartmenu' }, // 📈
+      { text: '\uD83D\uDCB0 Post', callback_data: 'nav:postmenu' },
+      { text: '\uD83D\uDCC8 Chart', callback_data: 'nav:chartmenu' },
     ],
     [
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
@@ -102,7 +123,7 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
-// ---------- Hub (the "/commands" shortcut screen) ----------
+// ---------- Hub ----------
 function hub() {
   const text =
     `PricePing \u2014 all commands\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
@@ -111,7 +132,7 @@ function hub() {
   const keyboard = [
     [
       { text: '\uD83D\uDCB0 Post & Chart', callback_data: 'nav:postmenu' },
-      { text: '\uD83C\uDFDA Thresholds', callback_data: 'nav:thresholds' },
+      { text: '\u2699 Coin settings', callback_data: 'nav:coinsettings' },
     ],
     [
       { text: '\uD83D\uDD07 Mute', callback_data: 'nav:mutemenu' },
@@ -127,7 +148,7 @@ function hub() {
     ],
     [
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
-      { text: '\u2699 Settings', callback_data: 'nav:settings' },
+      { text: '\u267B Reset', callback_data: 'nav:reset' },
     ],
     HOME_ROW,
   ];
@@ -154,26 +175,26 @@ function prices(priceMap) {
 }
 
 // ---------- Post / Chart menus ----------
-function postMenu() {
+function postMenu(recentSymbols = []) {
   const text = 'Post a price update \u2014 pick a coin:';
-  return { text, keyboard: coinGrid('post:coin') };
+  return { text, keyboard: coinGrid('post:coin', { recentSymbols }) };
 }
 
 function postChannelPicker(symbol, channels) {
   const text = `Post ${symbol} to which channel?`;
-  return { text, keyboard: channelPicker(`post:send:${symbol}`, channels, [[{ text: '\u25C0 Back', callback_data: 'nav:postmenu' }]]) };
+  return { text, keyboard: channelPicker(`post:send:${symbol}`, channels, [backRow('nav:postmenu')]) };
 }
 
-function chartMenu() {
+function chartMenu(recentSymbols = []) {
   const text = 'Chart a coin \u2014 pick one:';
-  return { text, keyboard: coinGrid('chart:coin') };
+  return { text, keyboard: coinGrid('chart:coin', { recentSymbols }) };
 }
 
 function chartPeriodPicker(symbol) {
   const periods = ['1h', '24h', '7d', '30d'];
   const buttons = periods.map((p) => ({ text: p, callback_data: `chart:period:${symbol}:${p}` }));
   const text = `Chart period for ${symbol}?`;
-  return { text, keyboard: [...chunk(buttons, 4), [{ text: '\u25C0 Back', callback_data: 'nav:chartmenu' }], HOME_ROW] };
+  return { text, keyboard: [...chunk(buttons, 4), ...footer('nav:chartmenu')] };
 }
 
 function chartChannelPicker(symbol, period, channels) {
@@ -181,14 +202,11 @@ function chartChannelPicker(symbol, period, channels) {
   const extra = [[{ text: '\uD83D\uDC41 Preview to me', callback_data: `chart:preview:${symbol}:${period}` }]];
   return {
     text,
-    keyboard: channelPicker(`chart:send:${symbol}:${period}`, channels, [
-      ...extra,
-      [{ text: '\u25C0 Back', callback_data: `chart:coin:${symbol}` }],
-    ]),
+    keyboard: channelPicker(`chart:send:${symbol}:${period}`, channels, [...extra, backRow(`chart:coin:${symbol}`)]),
   };
 }
 
-// ---------- Thresholds (with +/- buttons) ----------
+// ---------- Thresholds ----------
 function thresholds(thresholdMap) {
   const lines = config.coins
     .map((coin) => {
@@ -201,9 +219,9 @@ function thresholds(thresholdMap) {
 
   const text =
     `Alert thresholds\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n` +
-    `Tap a coin to adjust with +/\u2212, or use /setthreshold SYMBOL AMOUNT [pct] for an exact value.`;
+    `Tap a coin below for the full settings screen (threshold, milestone, cooldown, mute).`;
 
-  const coinButtons = config.coins.map((c) => ({ text: c.symbol, callback_data: `threshold:edit:${c.symbol}` }));
+  const coinButtons = config.coins.map((c) => ({ text: c.symbol, callback_data: `coin:settings:${c.symbol}` }));
   const keyboard = [...chunk(coinButtons, 3), HOME_ROW];
   return { text, keyboard };
 }
@@ -216,16 +234,56 @@ function thresholdEdit(symbol, threshold) {
       { text: '\u2212', callback_data: `threshold:dec:${symbol}` },
       { text: '+', callback_data: `threshold:inc:${symbol}` },
     ],
-    [{ text: '\u25C0 Back', callback_data: 'nav:thresholds' }],
-    HOME_ROW,
+    ...footer(`coin:settings:${symbol}`),
   ];
   return { text, keyboard };
 }
 
+// ---------- Unified coin settings screen ----------
+function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil }) {
+  const tStr = threshold ? (threshold.type === 'pct' ? `${threshold.value}%` : `$${format.formatChangeUsd(threshold.value)}`) : '\u2014';
+  const mStr = milestone.isDisabled ? 'off' : milestone.step ? `$${format.formatChangeUsd(milestone.step)}${milestone.isCustom ? ' (custom)' : ' (default)'}` : '\u2014';
+  const cStr = `${cooldownMinutes}m${isDefaultCooldown ? ' (default)' : ' (custom)'}`;
+  const muteStr = mutedUntil && new Date(mutedUntil).getTime() > Date.now() ? `muted, resumes in ${formatRemaining(new Date(mutedUntil).getTime() - Date.now())}` : 'not muted';
+
+  const text =
+    `${symbol} settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `Threshold   ${tStr}\n` +
+    `Milestone   ${mStr}\n` +
+    `Cooldown    ${cStr}\n` +
+    `Mute        ${muteStr}`;
+
+  const keyboard = [
+    [{ text: '\uD83C\uDFDA Threshold \u2212', callback_data: `threshold:dec:${symbol}` }, { text: '+', callback_data: `threshold:inc:${symbol}` }],
+    [{ text: '\uD83C\uDFAF Milestone \u2212', callback_data: `milestone:dec:${symbol}` }, { text: '+', callback_data: `milestone:inc:${symbol}` }],
+    [{ text: milestone.isDisabled ? '\uD83C\uDFAF Enable milestones' : '\uD83C\uDFAF Disable milestones', callback_data: `milestone:toggle:${symbol}` }],
+    [{ text: '\u23F1 Cooldown \u2212', callback_data: `cooldown:dec:${symbol}` }, { text: '+', callback_data: `cooldown:inc:${symbol}` }],
+    isDefaultCooldown ? [] : [{ text: '\u21A9 Reset cooldown to default', callback_data: `cooldown:reset:${symbol}` }],
+    [{ text: '\uD83D\uDD07 Mute', callback_data: `mute:coin:${symbol}` }],
+    ...footer('nav:thresholds'),
+  ].filter((row) => row.length);
+
+  return { text, keyboard };
+}
+
+// ---------- Milestones ----------
+function milestoneList(milestoneMap) {
+  const lines = config.coins
+    .map((coin) => {
+      const m = milestoneMap.get(coin.symbol);
+      if (!m || m.step === null) return `${coin.symbol.padEnd(5, ' ')} off`;
+      return `${coin.symbol.padEnd(5, ' ')} $${format.formatChangeUsd(m.step)}${m.isCustom ? ' (custom)' : ''}`;
+    })
+    .join('\n');
+  const text = `Milestone steps\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\nTap a coin for full settings.`;
+  const coinButtons = config.coins.map((c) => ({ text: c.symbol, callback_data: `coin:settings:${c.symbol}` }));
+  return { text, keyboard: [...chunk(coinButtons, 3), HOME_ROW] };
+}
+
 // ---------- Mute ----------
-function muteMenu() {
+function muteMenu(recentSymbols = []) {
   const text = 'Mute a coin \u2014 pick one:';
-  return { text, keyboard: coinGrid('mute:coin') };
+  return { text, keyboard: coinGrid('mute:coin', { recentSymbols }) };
 }
 
 function muteDurationPicker(symbol) {
@@ -234,7 +292,7 @@ function muteDurationPicker(symbol) {
     text,
     keyboard: durationPicker(`mute:apply:${symbol}`, [
       [{ text: '\uD83D\uDD14 Unmute now', callback_data: `mute:clear:${symbol}` }],
-      [{ text: '\u25C0 Back', callback_data: 'nav:mutemenu' }],
+      backRow('nav:mutemenu'),
     ]),
   };
 }
@@ -249,17 +307,17 @@ function pauseMenu({ paused, pausedUntil }) {
   const text = `${status}\n\nPause for how long?`;
   return {
     text,
-    keyboard: durationPicker('pause:apply', [[{ text: '\u25B6 Resume now', callback_data: 'action:resume' }]]),
+    keyboard: durationPicker('pause:apply', [[{ text: '\u25B6 Resume now', callback_data: 'action:resume' }], backRow('nav:hub')]),
   };
 }
 
 // ---------- Automation ----------
 function automationHub() {
-  const text = 'Automation \u2014 recurring posts/charts and trigger\u2192action rules.';
+  const text = 'Automation \u2014 recurring posts/charts/digests and trigger\u2192action rules.';
   const keyboard = [
     [{ text: '\uD83D\uDCC5 Schedules', callback_data: 'nav:schedules' }],
     [{ text: '\u26A1 Rules', callback_data: 'nav:rules' }],
-    HOME_ROW,
+    ...footer('nav:hub'),
   ];
   return { text, keyboard };
 }
@@ -268,7 +326,7 @@ function scheduleList(schedules) {
   const lines = schedules.length
     ? schedules
         .map((s) => {
-          const what = s.kind === 'chart' ? `chart ${s.symbol} (${s.period})` : `post ${s.symbol}`;
+          const what = s.kind === 'chart' ? `chart ${s.symbol} (${s.period})` : s.kind === 'digest' ? 'digest' : `post ${s.symbol}`;
           const when =
             s.cadence === 'hourly'
               ? `hourly :${String(s.atMinuteUtc).padStart(2, '0')}`
@@ -281,8 +339,11 @@ function scheduleList(schedules) {
     : 'No schedules yet.';
 
   const text = `Schedules\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}`;
-  const delButtons = schedules.map((s) => ({ text: `\u2716 #${s.id}`, callback_data: `schedule:del:${s.id}` }));
-  const keyboard = [...chunk(delButtons, 3), [{ text: '\u2795 Add schedule', callback_data: 'schedule:add' }], [{ text: '\u25C0 Back', callback_data: 'nav:automation' }], HOME_ROW];
+  const rowButtons = schedules.map((s) => [
+    { text: `\u270F #${s.id}`, callback_data: `schedule:edit:${s.id}` },
+    { text: `\u2716 #${s.id}`, callback_data: `schedule:del:${s.id}` },
+  ]);
+  const keyboard = [...rowButtons, [{ text: '\u2795 Add schedule', callback_data: 'schedule:add' }], ...footer('nav:automation')];
   return { text, keyboard };
 }
 
@@ -291,40 +352,56 @@ function ruleList(rules) {
     ? rules
         .map((r) => {
           const trig = r.triggerSymbol ? `${r.triggerType}:${r.triggerSymbol}` : r.triggerType;
-          return `#${r.id} on ${trig} \u2192 ${r.actionType} (${r.actionParams.channel || '?'})`;
+          const min = r.minMovePct !== null && r.minMovePct !== undefined ? ` (min ${r.minMovePct}%)` : '';
+          return `#${r.id} on ${trig}${min} \u2192 ${r.actionType} (${r.actionParams.channel || '?'})`;
         })
         .join('\n')
     : 'No rules yet.';
 
   const text = `Rules\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}`;
-  const delButtons = rules.map((r) => ({ text: `\u2716 #${r.id}`, callback_data: `rule:del:${r.id}` }));
-  const keyboard = [...chunk(delButtons, 3), [{ text: '\u2795 Add rule', callback_data: 'rule:add' }], [{ text: '\u25C0 Back', callback_data: 'nav:automation' }], HOME_ROW];
+  const rowButtons = rules.map((r) => [
+    { text: `\u270F #${r.id}`, callback_data: `rule:edit:${r.id}` },
+    { text: `\u2716 #${r.id}`, callback_data: `rule:del:${r.id}` },
+  ]);
+  const keyboard = [...rowButtons, [{ text: '\u2795 Add rule', callback_data: 'rule:add' }], ...footer('nav:automation')];
   return { text, keyboard };
 }
 
 // ---------- Channels ----------
-function channelList(channels) {
+function channelList(channels, defaultsByType) {
   const lines = channels.length
     ? channels.map((c) => `${c.isDefault ? '\u2B50' : '  '} ${c.name.padEnd(10, ' ')} ${c.chatId}`).join('\n')
     : 'No channels registered.';
 
-  const text = `Channels\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n\u2B50 = default target for automatic alerts`;
+  const typeLines = Object.entries(defaultsByType || {})
+    .map(([type, name]) => `${type} \u2192 #${name}`)
+    .join('\n');
+
+  const text =
+    `Channels\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n\u2B50 = overall default` +
+    (typeLines ? `\n\nPer-type overrides:\n${typeLines}` : '') +
+    `\n\nSet a per-type default: /setdefaultchannel name threshold|milestone|manual|chart|digest`;
   const rows = channels
     .filter((c) => !c.isDefault)
     .map((c) => [
       { text: `\u2B50 Make ${c.name} default`, callback_data: `channel:setdefault:${c.name}` },
       { text: `\u2716 Remove`, callback_data: `channel:del:${c.name}` },
     ]);
-  const keyboard = [...rows, [{ text: '\u2795 Add channel', callback_data: 'channel:add' }], HOME_ROW];
+  const keyboard = [...rows, [{ text: '\u2795 Add channel', callback_data: 'channel:add' }], [{ text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' }], ...footer('nav:hub')];
   return { text, keyboard };
+}
+
+function broadcastChannelPicker(channels) {
+  const text = 'Broadcast a plain message to which channel?';
+  return { text, keyboard: channelPicker('broadcast:pick', channels, [backRow('nav:channels')]) };
 }
 
 // ---------- Captions ----------
 function captionTypes() {
   const types = ['threshold', 'milestone', 'manual', 'chart'];
-  const text = 'Which caption would you like to view or edit?';
+  const text = 'Which caption would you like to view or edit?\n(Per-coin overrides: /setcaption type:SYMBOL <template>)';
   const buttons = types.map((t) => ({ text: t, callback_data: `caption:type:${t}` }));
-  return { text, keyboard: [...chunk(buttons, 2), [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }], HOME_ROW] };
+  return { text, keyboard: [...chunk(buttons, 2), [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }], ...footer('nav:hub')] };
 }
 
 function captionDetail(alertType, currentTemplate, isCustom) {
@@ -336,8 +413,7 @@ function captionDetail(alertType, currentTemplate, isCustom) {
     [{ text: '\uD83D\uDC41 Preview', callback_data: `caption:preview:${alertType}` }],
     isCustom ? [{ text: '\u21A9 Reset to default', callback_data: `caption:reset:${alertType}` }] : [],
     [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }],
-    [{ text: '\u25C0 Back', callback_data: 'nav:captiontypes' }],
-    HOME_ROW,
+    ...footer('nav:captiontypes'),
   ].filter((row) => row.length);
   return { text, keyboard };
 }
@@ -348,7 +424,67 @@ function variablesHelp(docs) {
     `Available caption variables\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n` +
     `A line containing a variable that doesn't apply (e.g. {change_pct} on a milestone alert) is dropped automatically \u2014 no need for if/else syntax.\n\n` +
     `Add your own with /setvar name value, then use {name} anywhere.`;
-  return { text, keyboard: [HOME_ROW] };
+  return { text, keyboard: footer('nav:captiontypes') };
+}
+
+// ---------- Coin settings entry grid (from hub) ----------
+function coinSettingsMenu(recentSymbols = []) {
+  const text = 'Coin settings \u2014 pick a coin (threshold, milestone, cooldown, mute in one screen):';
+  return { text, keyboard: coinGrid('coin:settings', { recentSymbols }) };
+}
+
+// ---------- Reset ----------
+function resetMenu() {
+  const text = 'Reset \u2014 pick what to reset back to defaults. Nothing happens until you confirm.';
+  const options = [
+    { text: 'Thresholds', code: 'thresholds' },
+    { text: 'Milestones', code: 'milestones' },
+    { text: 'Cooldowns', code: 'cooldowns' },
+    { text: 'Captions', code: 'captions' },
+    { text: 'Variables', code: 'vars' },
+    { text: 'Channels', code: 'channels' },
+    { text: 'Automation', code: 'automation' },
+  ];
+  const buttons = options.map((o) => ({ text: o.text, callback_data: `reset:confirm:${o.code}` }));
+  return {
+    text,
+    keyboard: [...chunk(buttons, 2), [{ text: '\u26A0 Reset EVERYTHING', callback_data: 'reset:confirm:everything' }], ...footer('nav:hub')],
+  };
+}
+
+function resetConfirm(type) {
+  const labels = {
+    thresholds: 'every threshold back to its factory default',
+    milestones: 'every milestone step back to its factory default',
+    cooldowns: 'every per-coin cooldown override (back to the global default)',
+    captions: 'every custom caption template (including per-coin overrides)',
+    vars: 'every custom {variable}',
+    channels: 'every channel except "main" (which becomes default again)',
+    automation: 'every schedule and every rule',
+    everything: 'ALL of the above, in one shot',
+  };
+  const text = `\u26A0\uFE0F This will reset ${labels[type] || type}. This can't be undone. Confirm?`;
+  const keyboard = [
+    [
+      { text: '\u2705 Yes, reset', callback_data: `reset:execute:${type}` },
+      { text: '\u274C Cancel', callback_data: 'nav:reset' },
+    ],
+    HOME_ROW,
+  ];
+  return { text, keyboard };
+}
+
+// ---------- Add-coin confirm ----------
+function addCoinConfirm({ symbol, name, pair, color }) {
+  const text = `Add this coin?\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSymbol  ${symbol}\nName    ${name}\nPair    ${pair}\nColor   ${color}`;
+  const keyboard = [
+    [
+      { text: '\u2705 Confirm', callback_data: 'addcoin:confirm' },
+      { text: '\u274C Cancel', callback_data: 'addcoin:cancel' },
+    ],
+    HOME_ROW,
+  ];
+  return { text, keyboard };
 }
 
 // ---------- Stats ----------
@@ -365,7 +501,7 @@ function stats({ today, allTime, perCoin }) {
     `All-time   ${allTime}\n` +
     `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `Per coin (all-time):\n${perCoinLines}\n\n` +
-    `Use /history SYMBOL for a per-coin breakdown.`;
+    `Use /history SYMBOL [channel] for a per-coin breakdown.`;
 
   const keyboard = [HOME_ROW];
   return { text, keyboard };
@@ -376,20 +512,19 @@ function settings() {
   const text =
     `Settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `Poll interval     ${config.pollIntervalMs / 1000}s\n` +
-    `Cooldown          ${config.cooldownMinutes}m per coin\n` +
+    `Cooldown default  ${config.cooldownMinutes}m per coin\n` +
     `Hourly send cap   ${config.maxAlertsPerHour}\n` +
-    `Memory limit      ${config.memoryLimitMb}MB\n` +
-    `Daily digest      ${config.digestEnabled ? `${config.digestHourUtc}:00 UTC` : 'disabled'}\n\n` +
+    `Memory limit      ${config.memoryLimitMb}MB\n\n` +
     `These are environment variables and take effect on next restart. ` +
-    `Channels, captions, thresholds, schedules, and rules are all live \u2014 see /commands.`;
+    `Channels, captions, thresholds, milestones, cooldowns, schedules (including digests), and rules are all live \u2014 see /commands.`;
   const keyboard = [HUB_ROW, HOME_ROW];
   return { text, keyboard };
 }
 
 // ---------- Test picker (advanced) ----------
-function testPicker() {
+function testPicker(recentSymbols = []) {
   const text = 'Test alert \u2014 pick a coin:';
-  return { text, keyboard: coinGrid('test:coin', [[{ text: '\u26A1 Run full pipeline check', callback_data: 'test:full' }]]) };
+  return { text, keyboard: coinGrid('test:coin', { extraRows: [[{ text: '\u26A1 Run full pipeline check', callback_data: 'test:full' }]], recentSymbols }) };
 }
 
 function testTypePicker(symbol) {
@@ -401,7 +536,7 @@ function testTypePicker(symbol) {
     { text: 'Chart', code: 'chart' },
   ];
   const buttons = types.map((t) => ({ text: t.text, callback_data: `test:type:${symbol}:${t.code}` }));
-  return { text, keyboard: [...chunk(buttons, 2), [{ text: '\u25C0 Back', callback_data: 'nav:test' }], HOME_ROW] };
+  return { text, keyboard: [...chunk(buttons, 2), ...footer('nav:test')] };
 }
 
 function testValuePicker(symbol, type) {
@@ -412,13 +547,13 @@ function testValuePicker(symbol, type) {
     { text: '+10%', code: 'plus10' },
   ];
   const buttons = presets.map((p) => ({ text: p.text, callback_data: `test:value:${symbol}:${type}:${p.code}` }));
-  return { text, keyboard: [...chunk(buttons, 3), [{ text: '\u25C0 Back', callback_data: `test:coin:${symbol}` }], HOME_ROW] };
+  return { text, keyboard: [...chunk(buttons, 3), backRow(`test:coin:${symbol}`), HOME_ROW] };
 }
 
-function testDestinationPicker(symbol, type, valueCode, channels) {
+function testDestinationPicker(symbol, type, valueCode, channels, lastDestination) {
   const text = `Send test ${type} for ${symbol} where?`;
   const extra = [[{ text: '\uD83D\uDC41 Preview to me only', callback_data: `test:send:${symbol}:${type}:${valueCode}:preview` }]];
-  return { text, keyboard: channelPicker(`test:send:${symbol}:${type}:${valueCode}`, channels, extra) };
+  return { text, keyboard: channelPicker(`test:send:${symbol}:${type}:${valueCode}`, channels, extra, lastDestination) };
 }
 
 module.exports = {
@@ -432,6 +567,9 @@ module.exports = {
   chartChannelPicker,
   thresholds,
   thresholdEdit,
+  coinSettings,
+  coinSettingsMenu,
+  milestoneList,
   muteMenu,
   muteDurationPicker,
   pauseMenu,
@@ -439,9 +577,13 @@ module.exports = {
   scheduleList,
   ruleList,
   channelList,
+  broadcastChannelPicker,
   captionTypes,
   captionDetail,
   variablesHelp,
+  resetMenu,
+  resetConfirm,
+  addCoinConfirm,
   stats,
   settings,
   testPicker,

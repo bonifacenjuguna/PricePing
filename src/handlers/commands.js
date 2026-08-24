@@ -14,6 +14,8 @@ const templatesDb = require('../db/templates');
 const customVarsDb = require('../db/customVars');
 const schedulesDb = require('../db/schedules');
 const rulesDb = require('../db/rules');
+const milestonesDb = require('../db/milestones');
+const cooldownsDb = require('../db/cooldowns');
 
 const marketData = require('../services/marketData');
 const binance = require('../services/binance');
@@ -24,12 +26,14 @@ const coinRegistry = require('../services/coinRegistry');
 const templateEngine = require('../services/templateEngine');
 const actions = require('../services/actions');
 const pendingInput = require('../services/pendingInput');
+const recentCoins = require('../services/recentCoins');
 
 const format = require('../utils/format');
 const { parseDuration, formatRemaining } = require('../utils/duration');
 const logger = require('../utils/logger');
 
 const lastThresholdChange = new Map(); // symbol -> { value, type } — powers the Undo button
+let pendingAddCoin = null; // single-admin bot — one addcoin confirmation in flight at a time
 
 function inlineReply(ctx, screen) {
   return ctx.reply(screen.text, { reply_markup: { inline_keyboard: screen.keyboard } });
@@ -37,7 +41,6 @@ function inlineReply(ctx, screen) {
 function inlineEdit(ctx, screen) {
   return ctx.editMessageText(screen.text, { reply_markup: { inline_keyboard: screen.keyboard } }).catch(() => inlineReply(ctx, screen));
 }
-
 function findCoin(symbol) {
   return config.coins.find((c) => c.symbol === symbol);
 }
@@ -61,16 +64,20 @@ async function help(ctx) {
       `/postchart SYMBOL [period] [channel] \u2014 post a chart to a channel\n` +
       `/thresholds \u2014 view thresholds\n` +
       `/setthreshold SYMBOL AMOUNT [pct] \u2014 change a threshold\n` +
+      `/milestones \u2014 view milestone steps \u00B7 /setmilestone SYMBOL STEP|off\n` +
+      `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
       `/addcoin SYMBOL PAIR #COLOR [Name]\n` +
-      `/history SYMBOL\n` +
+      `/history SYMBOL [channel]\n` +
       `/stats\n` +
-      `/channels \u2014 list channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name\n` +
-      `/setcaption TYPE <template> \u00B7 /previewcaption TYPE \u00B7 /resetcaption TYPE\n` +
+      `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
+      `/setcaption TYPE[:SYMBOL] <template> \u00B7 /previewcaption TYPE[:SYMBOL] \u00B7 /resetcaption TYPE[:SYMBOL]\n` +
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
       `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules\n` +
       `/broadcast CHANNEL message... \u2014 plain text post\n` +
+      `/exportconfig \u00B7 /importconfig\n` +
+      `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
       `/test [SYMBOL] \u2014 advanced test menu\n` +
       `/whoami\n\n` +
       `Or type /commands for the full button-driven menu.`
@@ -140,13 +147,8 @@ async function thresholdsCmd(ctx) {
   await inlineReply(ctx, menu.thresholds(await thresholdsDb.getAll()));
 }
 
-async function thresholdEditScreen(ctx, symbol) {
-  const t = await thresholdsDb.get(symbol);
-  await inlineEdit(ctx, menu.thresholdEdit(symbol, t));
-}
-
 function thresholdStep(threshold) {
-  if (!threshold) return { value: 1, type: 'usd' };
+  if (!threshold) return 1;
   if (threshold.type === 'pct') return 0.5;
   const raw = threshold.value * 0.1;
   return Math.max(Math.round(raw * 100) / 100, 0.01);
@@ -162,7 +164,8 @@ async function thresholdAdjust(ctx, symbol, dir) {
   const minValue = current.type === 'pct' ? 0.1 : 0.01;
   const nextValue = Math.max(Math.round((current.value + (dir === 'inc' ? step : -step)) * 100) / 100, minValue);
   await thresholdsDb.set(symbol, nextValue, current.type);
-  await thresholdEditScreen(ctx, symbol);
+  await ctx.answerCbQuery();
+  await coinSettingsScreen(ctx, symbol);
 }
 
 async function setThreshold(ctx) {
@@ -201,6 +204,126 @@ async function undoThreshold(ctx, symbol) {
 }
 
 // ---------------------------------------------------------------------------
+// Unified coin settings screen — threshold, milestone, cooldown, mute
+// ---------------------------------------------------------------------------
+async function coinSettingsMenuScreen(ctx) {
+  await inlineEdit(ctx, menu.coinSettingsMenu(recentCoins.getRecent()));
+}
+
+async function coinSettingsScreen(ctx, symbol) {
+  const coin = findCoin(symbol);
+  if (!coin) {
+    await ctx.answerCbQuery('Unknown coin');
+    return;
+  }
+  const [threshold, milestoneMap, cooldownOverrides, states] = await Promise.all([
+    thresholdsDb.get(symbol),
+    milestonesDb.getAll(),
+    cooldownsDb.getAll(),
+    coinStateDb.getAll(),
+  ]);
+  const milestone = milestoneMap.get(symbol) || { step: coin.milestoneStep, isCustom: false, isDisabled: false };
+  const isDefaultCooldown = cooldownOverrides[symbol] === undefined;
+  const cooldownMinutes = cooldownOverrides[symbol] ?? config.cooldownMinutes;
+  const mutedUntil = (states[symbol] || {}).pausedUntil;
+  await inlineEdit(ctx, menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil }));
+}
+
+// --- Milestones ---
+async function milestonesCmd(ctx) {
+  await inlineReply(ctx, menu.milestoneList(await milestonesDb.getAll()));
+}
+
+async function milestoneHeuristicBase(symbol) {
+  const threshold = await thresholdsDb.get(symbol);
+  return threshold ? (threshold.type === 'usd' ? threshold.value * 20 : 100) : 100;
+}
+
+async function milestoneAdjust(ctx, symbol, dir) {
+  let base = await milestonesDb.getEffectiveStep(symbol);
+  if (!base) base = await milestoneHeuristicBase(symbol);
+  const step = Math.max(Math.round(base * 0.1 * 100) / 100, 0.01);
+  const next = Math.max(Math.round((base + (dir === 'inc' ? step : -step)) * 100) / 100, 0.01);
+  await milestonesDb.set(symbol, next);
+  await ctx.answerCbQuery();
+  await coinSettingsScreen(ctx, symbol);
+}
+
+async function milestoneToggle(ctx, symbol) {
+  const current = await milestonesDb.getEffectiveStep(symbol);
+  if (current !== null && current !== undefined) {
+    await milestonesDb.disable(symbol);
+    await ctx.answerCbQuery('Milestones disabled');
+  } else {
+    await milestonesDb.clear(symbol);
+    const effective = await milestonesDb.getEffectiveStep(symbol);
+    if (effective === null || effective === undefined) {
+      const base = await milestoneHeuristicBase(symbol);
+      await milestonesDb.set(symbol, Math.max(Math.round(base * 100) / 100, 1));
+    }
+    await ctx.answerCbQuery('Milestones enabled');
+  }
+  await coinSettingsScreen(ctx, symbol);
+}
+
+async function setMilestoneCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const symbol = (parts[1] || '').toUpperCase();
+  const valueArg = (parts[2] || '').toLowerCase();
+  if (!findCoin(symbol) || !valueArg) {
+    await ctx.reply('Usage: /setmilestone SYMBOL STEP\nOr: /setmilestone SYMBOL off');
+    return;
+  }
+  if (valueArg === 'off') {
+    await milestonesDb.disable(symbol);
+    await ctx.reply(`${symbol} milestones turned off.`);
+    return;
+  }
+  const step = Number(valueArg);
+  if (!Number.isFinite(step) || step <= 0) {
+    await ctx.reply('Step must be a positive number, or "off".');
+    return;
+  }
+  await milestonesDb.set(symbol, step);
+  await ctx.reply(`${symbol} will now post a milestone alert every $${format.formatChangeUsd(step)} (e.g. crossing 71,500 / 72,000 / 72,500...).`);
+}
+
+// --- Cooldown overrides ---
+async function cooldownAdjust(ctx, symbol, dir) {
+  const current = await cooldownsDb.getEffective(symbol);
+  const next = Math.max(current + (dir === 'inc' ? 1 : -1), 1);
+  await cooldownsDb.set(symbol, next);
+  await ctx.answerCbQuery();
+  await coinSettingsScreen(ctx, symbol);
+}
+async function cooldownResetBtn(ctx, symbol) {
+  await cooldownsDb.clear(symbol);
+  await ctx.answerCbQuery('Reset to default');
+  await coinSettingsScreen(ctx, symbol);
+}
+async function setCooldownCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const symbol = (parts[1] || '').toUpperCase();
+  const minutes = Number(parts[2]);
+  if (!findCoin(symbol) || !Number.isFinite(minutes) || minutes <= 0) {
+    await ctx.reply('Usage: /setcooldown SYMBOL MINUTES');
+    return;
+  }
+  await cooldownsDb.set(symbol, minutes);
+  await ctx.reply(`${symbol} cooldown set to ${minutes}m.`);
+}
+async function resetCooldownCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const symbol = (parts[1] || '').toUpperCase();
+  if (!findCoin(symbol)) {
+    await ctx.reply('Usage: /resetcooldown SYMBOL');
+    return;
+  }
+  await cooldownsDb.clear(symbol);
+  await ctx.reply(`${symbol} cooldown reset to the default (${config.cooldownMinutes}m).`);
+}
+
+// ---------------------------------------------------------------------------
 // Pause / resume / mute
 // ---------------------------------------------------------------------------
 async function pause(ctx) {
@@ -217,12 +340,11 @@ async function pause(ctx) {
 
 async function resume(ctx) {
   await settingsDb.setPaused(false);
-  const text = 'Resumed \u2014 alerts will post as usual.';
   if (ctx.updateType === 'callback_query') {
     await ctx.answerCbQuery('Resumed');
     await home(ctx);
   } else {
-    await ctx.reply(text);
+    await ctx.reply('Resumed \u2014 alerts will post as usual.');
   }
 }
 
@@ -272,15 +394,16 @@ async function unmute(ctx) {
 }
 
 async function muteMenuScreen(ctx) {
-  await inlineEdit(ctx, menu.muteMenu());
+  await inlineEdit(ctx, menu.muteMenu(recentCoins.getRecent()));
 }
 async function muteDurationScreen(ctx, symbol) {
   await inlineEdit(ctx, menu.muteDurationPicker(symbol));
 }
 async function muteApply(ctx, symbol, code) {
   const durationStr = DURATION_CODES[code];
-  const ms = durationStr === null ? 100 * 365 * 24 * 60 * 60 * 1000 : parseDuration(durationStr); // "indefinite" = ~100 years
+  const ms = durationStr === null ? 100 * 365 * 24 * 60 * 60 * 1000 : parseDuration(durationStr);
   await coinStateDb.setMuteUntil(symbol, new Date(Date.now() + ms));
+  recentCoins.noteCoin(symbol);
   await ctx.answerCbQuery(`${symbol} muted`);
   await muteMenuScreen(ctx);
 }
@@ -291,10 +414,10 @@ async function muteClear(ctx, symbol) {
 }
 
 // ---------------------------------------------------------------------------
-// Post & chart — button flow + slash commands (both go through actions.js)
+// Post & chart
 // ---------------------------------------------------------------------------
 async function postMenuScreen(ctx) {
-  await inlineEdit(ctx, menu.postMenu());
+  await inlineEdit(ctx, menu.postMenu(recentCoins.getRecent()));
 }
 async function postChannelScreen(ctx, symbol) {
   const channels = await channelsDb.getAll();
@@ -305,7 +428,6 @@ async function postExecute(ctx, symbol, channelName) {
   const result = await actions.postPriceUpdate(ctx.telegram, symbol, channelName);
   await ctx.reply(result.message);
 }
-
 async function postCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
@@ -316,14 +438,13 @@ async function postCmd(ctx) {
   const result = await actions.postPriceUpdate(ctx.telegram, symbol, parts[2]);
   await ctx.reply(result.message);
 }
-
 async function manualPost(ctx, symbol) {
   const result = await actions.postPriceUpdate(ctx.telegram, symbol, undefined);
   await ctx.reply(result.message);
 }
 
 async function chartMenuScreen(ctx) {
-  await inlineEdit(ctx, menu.chartMenu());
+  await inlineEdit(ctx, menu.chartMenu(recentCoins.getRecent()));
 }
 async function chartPeriodScreen(ctx, symbol) {
   await inlineEdit(ctx, menu.chartPeriodPicker(symbol));
@@ -341,7 +462,6 @@ async function chartPreviewExecute(ctx, symbol, period) {
   await ctx.answerCbQuery('Rendering...');
   await sendChartPreview(ctx, symbol, period);
 }
-
 async function sendChartPreview(ctx, symbol, periodKey) {
   const coin = findCoin(symbol);
   const preset = chartRenderer.PERIOD_PRESETS[periodKey];
@@ -365,7 +485,6 @@ async function sendChartPreview(ctx, symbol, periodKey) {
     caption: `${coin.name} (${coin.symbol}) \u2014 ${preset.label}`,
   });
 }
-
 async function chartCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
@@ -376,7 +495,6 @@ async function chartCmd(ctx) {
   }
   await sendChartPreview(ctx, symbol, periodKey);
 }
-
 async function postChartCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
@@ -391,14 +509,13 @@ async function postChartCmd(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Coins
+// Coins — /addcoin now confirm-before-create
 // ---------------------------------------------------------------------------
 async function addCoinCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
-  await runAddCoin(ctx, parts.slice(1));
+  await stageAddCoin(ctx, parts.slice(1));
 }
-
-async function runAddCoin(ctx, parts) {
+async function stageAddCoin(ctx, parts) {
   const symbol = (parts[0] || '').toUpperCase();
   const pair = (parts[1] || '').toUpperCase();
   const color = parts[2] || '';
@@ -408,26 +525,47 @@ async function runAddCoin(ctx, parts) {
     await ctx.reply('Usage: SYMBOL BINANCEPAIR #HEXCOLOR [Name]\nExample: ADA ADAUSDT #0033AD Cardano');
     return;
   }
+  if (findCoin(symbol)) {
+    await ctx.reply(`${symbol} is already tracked.`);
+    return;
+  }
+  pendingAddCoin = { symbol, name, pair, color };
+  await inlineReply(ctx, menu.addCoinConfirm({ symbol, name, pair, color }));
+}
+async function addCoinConfirmExecute(ctx) {
+  if (!pendingAddCoin) {
+    await ctx.answerCbQuery('Nothing pending');
+    return;
+  }
+  await ctx.answerCbQuery('Adding...');
+  const { symbol, name, pair, color } = pendingAddCoin;
+  pendingAddCoin = null;
   try {
     const { logoSource } = await coinRegistry.addCoin({ symbol, name, binancePair: pair, color });
     await ctx.reply(
-      `${symbol} added \u2014 tracking ${pair}. Logo ${logoSource === 'downloaded' ? 'downloaded' : 'using a plain fallback (re-run /addcoin logic later if you want the real one)'}.`
+      `${symbol} added \u2014 tracking ${pair}. Logo ${logoSource === 'downloaded' ? 'downloaded' : 'using a plain fallback'}.`
     );
   } catch (err) {
     await ctx.reply(`Could not add ${symbol}: ${err.message}`);
   }
 }
+async function addCoinCancel(ctx) {
+  pendingAddCoin = null;
+  await ctx.answerCbQuery('Cancelled');
+  await ctx.reply('Cancelled — nothing added.');
+}
 
 async function historyCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
+  const channelName = parts[2];
   if (!findCoin(symbol)) {
-    await ctx.reply('Usage: /history SYMBOL');
+    await ctx.reply('Usage: /history SYMBOL [channel]');
     return;
   }
-  const rows = await alertsLogDb.recentForSymbol(symbol, 10);
+  const rows = await alertsLogDb.recentForSymbol(symbol, 10, channelName);
   if (!rows.length) {
-    await ctx.reply(`No alerts logged yet for ${symbol}.`);
+    await ctx.reply(`No alerts logged yet for ${symbol}${channelName ? ` on #${channelName}` : ''}.`);
     return;
   }
   const lines = rows.map((r) => {
@@ -441,10 +579,12 @@ async function historyCmd(ctx) {
 // Channels
 // ---------------------------------------------------------------------------
 async function channelsScreen(ctx) {
-  await inlineEdit(ctx, menu.channelList(await channelsDb.getAll()));
+  const [channels, defaultsByType] = await Promise.all([channelsDb.getAll(), channelsDb.getDefaultsByType()]);
+  await inlineEdit(ctx, menu.channelList(channels, defaultsByType));
 }
 async function channelsListCmd(ctx) {
-  await inlineReply(ctx, menu.channelList(await channelsDb.getAll()));
+  const [channels, defaultsByType] = await Promise.all([channelsDb.getAll(), channelsDb.getDefaultsByType()]);
+  await inlineReply(ctx, menu.channelList(channels, defaultsByType));
 }
 async function channelAddStart(ctx) {
   const prompt = 'Send: name chat_id\nExample: vip -1001234567890  (or vip @MyVipChannel)';
@@ -489,13 +629,33 @@ async function channelDel(ctx, name) {
 async function setDefaultChannelCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const name = parts[1];
+  const alertType = parts[2];
   const channel = await channelsDb.get(name);
   if (!channel) {
     await ctx.reply(`No channel named "${name}". /channels to see the list.`);
     return;
   }
+  if (alertType) {
+    if (!['threshold', 'milestone', 'manual', 'chart', 'digest'].includes(alertType)) {
+      await ctx.reply('Type must be one of: threshold, milestone, manual, chart, digest');
+      return;
+    }
+    await channelsDb.setDefaultForType(alertType, name);
+    await ctx.reply(`"${name}" is now the default channel for ${alertType} alerts specifically.`);
+    return;
+  }
   await channelsDb.setDefault(name);
-  await ctx.reply(`"${name}" is now the default channel for automatic alerts.`);
+  await ctx.reply(`"${name}" is now the overall default channel.`);
+}
+async function clearDefaultChannelTypeCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const alertType = parts[1];
+  if (!alertType) {
+    await ctx.reply('Usage: /cleardefaultchannel TYPE (threshold, milestone, manual, chart, digest)');
+    return;
+  }
+  await channelsDb.clearDefaultForType(alertType);
+  await ctx.reply(`Per-type default for "${alertType}" cleared — falls back to the overall default.`);
 }
 async function channelSetDefault(ctx, name) {
   await channelsDb.setDefault(name);
@@ -503,8 +663,19 @@ async function channelSetDefault(ctx, name) {
   await channelsScreen(ctx);
 }
 
+async function broadcastMenuScreen(ctx) {
+  const channels = await channelsDb.getAll();
+  await inlineEdit(ctx, menu.broadcastChannelPicker(channels));
+}
+async function broadcastPick(ctx, channelName) {
+  const prompt = `Send the message to broadcast to #${channelName}.`;
+  pendingInput.set('broadcast', { channelName }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
+}
+
 // ---------------------------------------------------------------------------
-// Captions / templates / variables
+// Captions / templates / variables — now with type:SYMBOL overrides
 // ---------------------------------------------------------------------------
 async function captionTypesScreen(ctx) {
   await inlineEdit(ctx, menu.captionTypes());
@@ -529,26 +700,30 @@ async function captionPreview(ctx, alertType) {
   await ctx.answerCbQuery('Rendering preview...');
   await sendCaptionPreview(ctx, alertType);
 }
-
-function sampleCoinFor(alertType) {
+function sampleCoinFor() {
   return findCoin('BTC') || config.coins[0];
 }
-
-async function sendCaptionPreview(ctx, alertType) {
-  const coin = sampleCoinFor(alertType);
+async function sendCaptionPreview(ctx, alertTypeArg) {
+  const base = alertTypeArg.split(':')[0].toLowerCase();
+  const symbolPart = alertTypeArg.split(':')[1];
+  const coin = symbolPart ? findCoin(symbolPart.toUpperCase()) : sampleCoinFor();
+  if (!templateEngine.DEFAULT_TEMPLATES[base] || !coin) {
+    await ctx.reply(symbolPart ? `Unknown symbol: ${symbolPart}` : `Unknown caption type "${base}".`);
+    return;
+  }
   const sampleChannel = { name: 'preview', chatId: '@PricePing' };
   let ctxData;
-  if (alertType === 'threshold') {
-    ctxData = { coin, price: 109842.5, changeUsd: 512, changePct: 0.47, direction: 'up', alertType, threshold: { value: 400, type: 'usd' }, cooldownRemainingMs: 300000, channel: sampleChannel };
-  } else if (alertType === 'milestone') {
-    ctxData = { coin, price: 110032, changeUsd: null, changePct: null, direction: 'up', alertType, milestoneLevel: 110000, channel: sampleChannel };
-  } else if (alertType === 'manual') {
+  if (base === 'threshold') {
+    ctxData = { coin, price: 109842.5, changeUsd: 512, changePct: 0.47, direction: 'up', alertType: 'threshold', threshold: { value: 400, type: 'usd' }, cooldownRemainingMs: 300000, channel: sampleChannel };
+  } else if (base === 'milestone') {
+    ctxData = { coin, price: 110032, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: 110000, channel: sampleChannel };
+  } else if (base === 'manual') {
     ctxData = { coin, price: 109842.5, direction: 'up', changePct: 1.8, stats24h: { priceChangePercent: 1.8, highPrice: 110500, lowPrice: 108200, openPrice: 108000, quoteVolume: 500000000 }, alertType: 'manual', changeSinceLastPost: 234.1, alertCountToday: 3, channel: sampleChannel };
   } else {
     ctxData = { coin, periodLabel: 'Last 24 hours', alertType: 'chart', channel: sampleChannel };
   }
-  const rendered = await templateEngine.renderCaption(alertType, ctxData);
-  await ctx.reply(`Preview (sample data):\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`, {});
+  const rendered = await templateEngine.renderCaption(base, ctxData);
+  await ctx.reply('Preview (sample data):\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
   await ctx.reply(rendered, { parse_mode: 'HTML' });
 }
 
@@ -556,38 +731,45 @@ async function setCaptionCmd(ctx) {
   const text = ctx.message.text.trim();
   const match = text.match(/^\/setcaption\s+(\S+)\s+([\s\S]+)$/);
   if (!match) {
-    await ctx.reply('Usage: /setcaption TYPE <template>\nTypes: threshold, milestone, manual, chart');
+    await ctx.reply('Usage: /setcaption TYPE[:SYMBOL] <template>\nTypes: threshold, milestone, manual, chart\nExample: /setcaption threshold:BTC \ud83d\udea8 {symbol} moved to ${price}!');
     return;
   }
   await runSetCaption(ctx, match[1], match[2]);
 }
-async function runSetCaption(ctx, alertType, template) {
-  const type = alertType.toLowerCase();
-  if (!templateEngine.DEFAULT_TEMPLATES[type]) {
-    await ctx.reply(`Unknown caption type "${alertType}". Choose one of: ${Object.keys(templateEngine.DEFAULT_TEMPLATES).join(', ')}`);
+async function runSetCaption(ctx, alertTypeArg, template) {
+  const base = alertTypeArg.split(':')[0].toLowerCase();
+  if (!templateEngine.DEFAULT_TEMPLATES[base]) {
+    await ctx.reply(`Unknown caption type "${base}". Choose one of: ${Object.keys(templateEngine.DEFAULT_TEMPLATES).join(', ')}`);
     return;
   }
-  await templatesDb.set(type, template);
-  await ctx.reply(`Caption for "${type}" updated. Use /previewcaption ${type} to see it rendered.`);
+  const symbolPart = alertTypeArg.split(':')[1];
+  if (symbolPart && !findCoin(symbolPart.toUpperCase())) {
+    await ctx.reply(`Unknown symbol: ${symbolPart}`);
+    return;
+  }
+  const key = symbolPart ? `${base}:${symbolPart.toUpperCase()}` : base;
+  await templatesDb.set(key, template);
+  await ctx.reply(`Caption for "${key}" updated. Use /previewcaption ${key} to see it rendered.`);
 }
 async function previewCaptionCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
-  const type = (parts[1] || '').toLowerCase();
-  if (!templateEngine.DEFAULT_TEMPLATES[type]) {
-    await ctx.reply(`Usage: /previewcaption TYPE\nTypes: ${Object.keys(templateEngine.DEFAULT_TEMPLATES).join(', ')}`);
+  const arg = parts[1];
+  if (!arg) {
+    await ctx.reply(`Usage: /previewcaption TYPE[:SYMBOL]`);
     return;
   }
-  await sendCaptionPreview(ctx, type);
+  await sendCaptionPreview(ctx, arg);
 }
 async function resetCaptionCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
-  const type = (parts[1] || '').toLowerCase();
-  if (!templateEngine.DEFAULT_TEMPLATES[type]) {
-    await ctx.reply(`Usage: /resetcaption TYPE`);
+  const arg = parts[1];
+  const base = (arg || '').split(':')[0].toLowerCase();
+  if (!templateEngine.DEFAULT_TEMPLATES[base]) {
+    await ctx.reply(`Usage: /resetcaption TYPE[:SYMBOL]`);
     return;
   }
-  await templatesDb.reset(type);
-  await ctx.reply(`Caption for "${type}" reset to default.`);
+  await templatesDb.reset(arg);
+  await ctx.reply(`Caption for "${arg}" reset to default.`);
 }
 
 async function variablesCmd(ctx) {
@@ -596,12 +778,9 @@ async function variablesCmd(ctx) {
 async function variablesScreen(ctx) {
   await inlineEdit(ctx, menu.variablesHelp(templateEngine.VARIABLE_DOCS));
 }
-
 async function setVarCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
-  const name = parts[1];
-  const value = parts.slice(2).join(' ');
-  await runSetVar(ctx, name, value);
+  await runSetVar(ctx, parts[1], parts.slice(2).join(' '));
 }
 async function runSetVar(ctx, name, value) {
   if (!name || !value || !/^[a-zA-Z0-9_]+$/.test(name)) {
@@ -617,22 +796,20 @@ async function runSetVar(ctx, name, value) {
 }
 async function delVarCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
-  const name = parts[1];
-  if (!name) {
+  if (!parts[1]) {
     await ctx.reply('Usage: /delvar name');
     return;
   }
-  await customVarsDb.remove(name);
-  await ctx.reply(`{${name}} removed.`);
+  await customVarsDb.remove(parts[1]);
+  await ctx.reply(`{${parts[1]}} removed.`);
 }
 
 // ---------------------------------------------------------------------------
-// Automation: schedules & rules
+// Automation: schedules & rules (now with digest kind, edit, magnitude condition)
 // ---------------------------------------------------------------------------
 async function automationHubScreen(ctx) {
   await inlineEdit(ctx, menu.automationHub());
 }
-
 async function schedulesScreen(ctx) {
   await inlineEdit(ctx, menu.scheduleList(await schedulesDb.getAll()));
 }
@@ -641,11 +818,11 @@ async function schedulesListCmd(ctx) {
 }
 async function scheduleAddStart(ctx) {
   const prompt =
-    'Send: <post|chart> SYMBOL [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n\n' +
+    'Send: <post|chart|digest> [SYMBOL] [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n\n' +
     'Examples:\n' +
     'post BTC main daily 09:00\n' +
     'chart ETH 24h vip daily 18:30\n' +
-    'chart BTC 1h main hourly 00:15\n' +
+    'digest main weekly 09:00 0  (0=Sunday)\n' +
     'post SOL news weekly 12:00 1  (1=Monday)';
   pendingInput.set('addschedule', {}, prompt);
   await ctx.answerCbQuery();
@@ -655,19 +832,22 @@ async function scheduleCmd(ctx) {
   const rest = ctx.message.text.replace(/^\/schedule\s*/, '').trim();
   await runAddSchedule(ctx, rest.split(/\s+/));
 }
-async function runAddSchedule(ctx, parts) {
+async function runAddSchedule(ctx, parts, editId = null) {
   const kind = (parts[0] || '').toLowerCase();
-  if (kind !== 'post' && kind !== 'chart') {
-    await ctx.reply('First word must be "post" or "chart". See /schedule with no args for the format.');
+  if (!['post', 'chart', 'digest'].includes(kind)) {
+    await ctx.reply('First word must be "post", "chart", or "digest". See /schedule with no args for the format.');
     return;
   }
   let idx = 1;
-  const symbol = (parts[idx++] || '').toUpperCase();
-  if (!findCoin(symbol)) {
-    await ctx.reply(`Unknown symbol: ${symbol}`);
-    return;
-  }
+  let symbol = 'ALL';
   let period = null;
+  if (kind !== 'digest') {
+    symbol = (parts[idx++] || '').toUpperCase();
+    if (!findCoin(symbol)) {
+      await ctx.reply(`Unknown symbol: ${symbol}`);
+      return;
+    }
+  }
   if (kind === 'chart') {
     period = parts[idx++];
     if (!chartRenderer.PERIOD_PRESETS[period]) {
@@ -703,13 +883,39 @@ async function runAddSchedule(ctx, parts) {
     }
   }
 
-  const id = await schedulesDb.add({ kind, symbol, period, channelName: channel.name, cadence, atMinuteUtc, atHourUtc, dayOfWeek });
-  await ctx.reply(`Schedule #${id} created.`);
+  const fields = { kind, symbol, period, channelName: channel.name, cadence, atMinuteUtc, atHourUtc, dayOfWeek };
+  if (editId) {
+    await schedulesDb.remove(editId);
+    const id = await schedulesDb.add(fields);
+    await ctx.reply(`Schedule updated (now #${id}).`);
+  } else {
+    const id = await schedulesDb.add(fields);
+    await ctx.reply(`Schedule #${id} created.`);
+  }
 }
 async function scheduleDel(ctx, id) {
   await schedulesDb.remove(Number(id));
   await ctx.answerCbQuery('Removed');
   await schedulesScreen(ctx);
+}
+async function scheduleEditStart(ctx, id) {
+  const all = await schedulesDb.getAll();
+  const s = all.find((x) => x.id === Number(id));
+  if (!s) {
+    await ctx.answerCbQuery('Not found');
+    return;
+  }
+  const timeStr = `${String(s.atHourUtc || 0).padStart(2, '0')}:${String(s.atMinuteUtc).padStart(2, '0')}`;
+  const line =
+    s.kind === 'digest'
+      ? `digest ${s.channelName} ${s.cadence} ${timeStr}${s.cadence === 'weekly' ? ` ${s.dayOfWeek}` : ''}`
+      : `${s.kind} ${s.symbol}${s.kind === 'chart' ? ` ${s.period}` : ''} ${s.channelName} ${s.cadence} ${timeStr}${
+          s.cadence === 'weekly' ? ` ${s.dayOfWeek}` : ''
+        }`;
+  const prompt = `Editing schedule #${id}. Current:\n${line}\n\nSend the corrected line to replace it, or /cancel to leave it as-is.`;
+  pendingInput.set('editschedule', { id: Number(id) }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
 }
 
 async function rulesScreen(ctx) {
@@ -720,10 +926,10 @@ async function rulesListCmd(ctx) {
 }
 async function ruleAddStart(ctx) {
   const prompt =
-    'Send: <threshold|milestone|any_alert>[:SYMBOL] <mirror|post_chart|broadcast> CHANNEL [period|message...]\n\n' +
+    'Send: <threshold|milestone|any_alert>[:SYMBOL] <mirror|post_chart|broadcast> CHANNEL [min:PCT] [period|message...]\n\n' +
     'Examples:\n' +
     'milestone:BTC mirror vip\n' +
-    'threshold post_chart main 1h\n' +
+    'threshold post_chart main min:5 1h  (only when the move is 5%+)\n' +
     'any_alert broadcast news \uD83D\uDEA8 {symbol} just moved!';
   pendingInput.set('addrule', {}, prompt);
   await ctx.answerCbQuery();
@@ -733,7 +939,7 @@ async function ruleCmd(ctx) {
   const rest = ctx.message.text.replace(/^\/addrule\s*/, '');
   await runAddRule(ctx, rest);
 }
-async function runAddRule(ctx, rawText) {
+async function runAddRule(ctx, rawText, editId = null) {
   const parts = rawText.trim().split(/\s+/);
   const triggerRaw = parts[0] || '';
   const [triggerType, triggerSymbol] = triggerRaw.split(':');
@@ -753,33 +959,64 @@ async function runAddRule(ctx, rawText) {
     return;
   }
 
+  let idx = 3;
+  let minMovePct = null;
+  if (parts[idx] && /^min:\d+(\.\d+)?$/.test(parts[idx])) {
+    minMovePct = Number(parts[idx].split(':')[1]);
+    idx += 1;
+  }
+
   const actionParams = { channel: channel.name };
   if (actionType === 'post_chart') {
-    actionParams.period = parts[3] || '24h';
+    actionParams.period = parts[idx] || '24h';
     if (!chartRenderer.PERIOD_PRESETS[actionParams.period]) {
       await ctx.reply(`Unknown chart period "${actionParams.period}".`);
       return;
     }
   } else if (actionType === 'broadcast') {
-    actionParams.message = parts.slice(3).join(' ');
+    actionParams.message = parts.slice(idx).join(' ');
     if (!actionParams.message) {
-      await ctx.reply('Broadcast rules need a message after the channel name.');
+      await ctx.reply('Broadcast rules need a message after the channel name (and min:X, if used).');
       return;
     }
   }
 
-  const id = await rulesDb.add({
+  const fields = {
     triggerType,
     triggerSymbol: triggerSymbol ? triggerSymbol.toUpperCase() : null,
     actionType,
     actionParams,
-  });
-  await ctx.reply(`Rule #${id} created.`);
+    minMovePct,
+  };
+  if (editId) {
+    await rulesDb.remove(editId);
+    const id = await rulesDb.add(fields);
+    await ctx.reply(`Rule updated (now #${id}).`);
+  } else {
+    const id = await rulesDb.add(fields);
+    await ctx.reply(`Rule #${id} created${minMovePct !== null ? ` (min move ${minMovePct}%)` : ''}.`);
+  }
 }
 async function ruleDel(ctx, id) {
   await rulesDb.remove(Number(id));
   await ctx.answerCbQuery('Removed');
   await rulesScreen(ctx);
+}
+async function ruleEditStart(ctx, id) {
+  const all = await rulesDb.getAll();
+  const r = all.find((x) => x.id === Number(id));
+  if (!r) {
+    await ctx.answerCbQuery('Not found');
+    return;
+  }
+  const trigger = r.triggerSymbol ? `${r.triggerType}:${r.triggerSymbol}` : r.triggerType;
+  const minPart = r.minMovePct !== null && r.minMovePct !== undefined ? ` min:${r.minMovePct}` : '';
+  const extra = r.actionType === 'post_chart' ? ` ${r.actionParams.period || '24h'}` : r.actionType === 'broadcast' ? ` ${r.actionParams.message || ''}` : '';
+  const line = `${trigger} ${r.actionType} ${r.actionParams.channel}${minPart}${extra}`;
+  const prompt = `Editing rule #${id}. Current:\n${line}\n\nSend the corrected line to replace it, or /cancel to leave it as-is.`;
+  pendingInput.set('editrule', { id: Number(id) }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
 }
 
 // ---------------------------------------------------------------------------
@@ -798,6 +1035,211 @@ async function runBroadcast(ctx, channelName, message) {
   }
   const result = await actions.broadcastMessage(ctx.telegram, channelName, message);
   await ctx.reply(result.message);
+}
+
+// ---------------------------------------------------------------------------
+// Export / import config
+// ---------------------------------------------------------------------------
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+async function exportConfigCmd(ctx) {
+  const [thresholdsMap, milestoneMap, cooldownMap, channels, defaultsByType, captionTemplates, customVars, schedules, rules] =
+    await Promise.all([
+      thresholdsDb.getAll(),
+      milestonesDb.getAll(),
+      cooldownsDb.getAll(),
+      channelsDb.getAll(),
+      channelsDb.getDefaultsByType(),
+      templatesDb.getAll(),
+      customVarsDb.getAll(),
+      schedulesDb.getAll(),
+      rulesDb.getAll(),
+    ]);
+
+  const milestoneOverrides = {};
+  for (const [symbol, v] of milestoneMap.entries()) {
+    if (v.isCustom || v.isDisabled) milestoneOverrides[symbol] = { step: v.step, disabled: v.isDisabled };
+  }
+
+  const exportObj = {
+    version: require('../../package.json').version,
+    exportedAt: new Date().toISOString(),
+    thresholds: thresholdsMap,
+    milestoneOverrides,
+    cooldownOverrides: cooldownMap,
+    channels: channels.map((c) => ({ name: c.name, chatId: c.chatId })),
+    defaultChannelsByType: defaultsByType,
+    captionTemplates,
+    customVars,
+    schedules: schedules.map((s) => ({
+      kind: s.kind,
+      symbol: s.symbol,
+      period: s.period,
+      channelName: s.channelName,
+      cadence: s.cadence,
+      atMinuteUtc: s.atMinuteUtc,
+      atHourUtc: s.atHourUtc,
+      dayOfWeek: s.dayOfWeek,
+    })),
+    rules: rules.map((r) => ({
+      triggerType: r.triggerType,
+      triggerSymbol: r.triggerSymbol,
+      actionType: r.actionType,
+      actionParams: r.actionParams,
+      minMovePct: r.minMovePct,
+    })),
+  };
+
+  const buffer = Buffer.from(JSON.stringify(exportObj, null, 2), 'utf8');
+  await ctx.replyWithDocument(Input.fromBuffer(buffer, `priceping-config-${todayStr()}.json`), {
+    caption: 'Config export. Use /importconfig, then paste this JSON as your next message to restore it.',
+  });
+}
+async function importConfigCmd(ctx) {
+  const prompt = 'Paste the exported JSON config as your next message.';
+  pendingInput.set('importconfig', {}, prompt);
+  await ctx.reply(prompt);
+}
+async function runImportConfig(ctx, text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    await ctx.reply(`Invalid JSON: ${err.message}`);
+    return;
+  }
+  const report = [];
+
+  async function section(name, fn) {
+    try {
+      const count = await fn();
+      report.push(`${name}: ${count}`);
+    } catch (err) {
+      report.push(`${name} FAILED: ${err.message}`);
+    }
+  }
+
+  if (data.thresholds) {
+    await section('thresholds', async () => {
+      for (const [symbol, t] of Object.entries(data.thresholds)) await thresholdsDb.set(symbol, t.value, t.type);
+      return Object.keys(data.thresholds).length;
+    });
+  }
+  if (data.milestoneOverrides) {
+    await section('milestones', async () => {
+      for (const [symbol, m] of Object.entries(data.milestoneOverrides)) {
+        if (m.disabled) await milestonesDb.disable(symbol);
+        else await milestonesDb.set(symbol, m.step);
+      }
+      return Object.keys(data.milestoneOverrides).length;
+    });
+  }
+  if (data.cooldownOverrides) {
+    await section('cooldowns', async () => {
+      for (const [symbol, mins] of Object.entries(data.cooldownOverrides)) await cooldownsDb.set(symbol, mins);
+      return Object.keys(data.cooldownOverrides).length;
+    });
+  }
+  if (data.channels) {
+    await section('channels', async () => {
+      for (const c of data.channels) if (c.name !== 'main') await channelsDb.add(c.name, c.chatId);
+      return data.channels.length;
+    });
+  }
+  if (data.defaultChannelsByType) {
+    await section('default channels by type', async () => {
+      for (const [type, name] of Object.entries(data.defaultChannelsByType)) await channelsDb.setDefaultForType(type, name);
+      return Object.keys(data.defaultChannelsByType).length;
+    });
+  }
+  if (data.captionTemplates) {
+    await section('captions', async () => {
+      for (const [key, tpl] of Object.entries(data.captionTemplates)) await templatesDb.set(key, tpl);
+      return Object.keys(data.captionTemplates).length;
+    });
+  }
+  if (data.customVars) {
+    await section('vars', async () => {
+      for (const [name, val] of Object.entries(data.customVars)) await customVarsDb.set(name, val);
+      return Object.keys(data.customVars).length;
+    });
+  }
+  if (data.schedules) {
+    await section('schedules', async () => {
+      for (const s of data.schedules) await schedulesDb.add(s);
+      return data.schedules.length;
+    });
+  }
+  if (data.rules) {
+    await section('rules', async () => {
+      for (const r of data.rules) await rulesDb.add(r);
+      return data.rules.length;
+    });
+  }
+
+  await ctx.reply(`Import complete:\n${report.join('\n') || 'nothing recognized in that JSON'}`);
+}
+
+// ---------------------------------------------------------------------------
+// Reset
+// ---------------------------------------------------------------------------
+async function resetCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const type = (parts[1] || '').toLowerCase();
+  if (!type) {
+    await inlineReply(ctx, menu.resetMenu());
+    return;
+  }
+  await inlineReply(ctx, menu.resetConfirm(type));
+}
+async function resetMenuScreen(ctx) {
+  await inlineEdit(ctx, menu.resetMenu());
+}
+async function resetConfirmScreen(ctx, type) {
+  await inlineEdit(ctx, menu.resetConfirm(type));
+}
+
+const RESET_HANDLERS = {
+  thresholds: async () => {
+    for (const [symbol, value] of Object.entries(config.defaultThresholds)) await thresholdsDb.set(symbol, value, 'usd');
+  },
+  milestones: async () => milestonesDb.clearAll(),
+  cooldowns: async () => cooldownsDb.clearAll(),
+  captions: async () => {
+    const all = await templatesDb.getAll();
+    for (const key of Object.keys(all)) await templatesDb.reset(key);
+  },
+  vars: async () => {
+    const all = await customVarsDb.getAll();
+    for (const name of Object.keys(all)) await customVarsDb.remove(name);
+  },
+  channels: async () => {
+    const all = await channelsDb.getAll();
+    for (const c of all) if (c.name !== 'main') await channelsDb.remove(c.name);
+    await channelsDb.setDefault('main');
+    const byType = await channelsDb.getDefaultsByType();
+    for (const t of Object.keys(byType)) await channelsDb.clearDefaultForType(t);
+  },
+  automation: async () => {
+    const scheds = await schedulesDb.getAll();
+    for (const s of scheds) await schedulesDb.remove(s.id);
+    const rls = await rulesDb.getAll();
+    for (const r of rls) await rulesDb.remove(r.id);
+  },
+};
+
+async function resetExecute(ctx, type) {
+  await ctx.answerCbQuery('Resetting...');
+  if (type === 'everything') {
+    for (const fn of Object.values(RESET_HANDLERS)) await fn();
+  } else if (RESET_HANDLERS[type]) {
+    await RESET_HANDLERS[type]();
+  } else {
+    await ctx.reply('Unknown reset type.');
+    return;
+  }
+  await ctx.reply(`Reset complete: ${type}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -834,15 +1276,12 @@ async function testAlert(ctx) {
   }
   const symbol = (parts[1] || '').toUpperCase();
   if (!symbol) {
-    await inlineReply(ctx, menu.testPicker());
+    await inlineReply(ctx, menu.testPicker(recentCoins.getRecent()));
     return;
   }
   await sendTestAlert(ctx, symbol);
 }
 
-// Simple immediate test (used by /test SYMBOL directly, and the old
-// action:test: callback for backward compatibility) — a plain +1.2% up
-// move sent to the default channel.
 async function sendTestAlert(ctx, symbol) {
   const coin = findCoin(symbol);
   if (!coin) {
@@ -878,7 +1317,6 @@ async function sendTestAlert(ctx, symbol) {
 async function testTypeScreen(ctx, symbol) {
   await inlineEdit(ctx, menu.testTypePicker(symbol));
 }
-
 async function testTypeChosen(ctx, symbol, type) {
   if (type === 'manual' || type === 'chart') {
     await testDestinationScreen(ctx, symbol, type, 'na');
@@ -891,7 +1329,7 @@ const VALUE_PRESETS = { plus2: 2, minus5: -5, plus10: 10 };
 
 async function testDestinationScreen(ctx, symbol, type, valueCode) {
   const channels = await channelsDb.getAll();
-  await inlineEdit(ctx, menu.testDestinationPicker(symbol, type, valueCode, channels));
+  await inlineEdit(ctx, menu.testDestinationPicker(symbol, type, valueCode, channels, recentCoins.getLastTestDestination()));
 }
 
 async function testExecute(ctx, symbol, type, valueCode, dest) {
@@ -901,6 +1339,9 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
     await ctx.reply(`Unknown symbol: ${symbol}`);
     return;
   }
+
+  recentCoins.noteCoin(symbol);
+  recentCoins.noteTestDestination(dest);
 
   const channel = dest === 'preview' ? { name: 'preview (you)', chatId: ctx.chat.id } : await channelsDb.get(dest);
   if (!channel) {
@@ -935,13 +1376,12 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
       const sent = await telegramSender.sendAlert(ctx.telegram, alert, channel);
       await ctx.reply(sent ? `Test threshold alert sent to #${channel.name}.` : 'Test send failed.');
     } else if (type === 'milestone') {
-      if (!coin.milestoneStep) {
+      const step = await milestonesDb.getEffectiveStep(symbol);
+      if (!step) {
         await ctx.reply(`${symbol} has no milestone step configured — nothing to simulate.`);
         return;
       }
-      const level = pct >= 0
-        ? (Math.floor(realPrice / coin.milestoneStep) + 1) * coin.milestoneStep
-        : (Math.floor(realPrice / coin.milestoneStep) - 1) * coin.milestoneStep;
+      const level = pct >= 0 ? (Math.floor(realPrice / step) + 1) * step : (Math.floor(realPrice / step) - 1) * step;
       const alert = { coin, price: level, changeUsd: null, changePct: null, direction: pct >= 0 ? 'up' : 'down', alertType: 'milestone', milestoneLevel: level };
       const sent = await telegramSender.sendAlert(ctx.telegram, alert, channel);
       await ctx.reply(sent ? `Test milestone alert sent to #${channel.name}.` : 'Test send failed.');
@@ -973,9 +1413,6 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
   }
 }
 
-// "Run full pipeline check" — fires one of each alert type as a preview to
-// the admin only, reporting pass/fail per step so a broken template/render
-// path is caught in one tap rather than discovered live.
 async function testFull(ctx) {
   await ctx.answerCbQuery('Running full check...');
   await ctx.reply('Running full pipeline check (previews to you only)...');
@@ -1010,8 +1447,9 @@ async function testFull(ctx) {
   });
 
   await step('Milestone alert render + send', async () => {
-    if (!coin.milestoneStep) return true; // nothing to test for this coin, not a failure
-    const level = (Math.floor(realPrice / coin.milestoneStep) + 1) * coin.milestoneStep;
+    const step_ = await milestonesDb.getEffectiveStep(coin.symbol);
+    if (!step_) return true; // nothing to test for this coin, not a failure
+    const level = (Math.floor(realPrice / step_) + 1) * step_;
     return telegramSender.sendAlert(
       ctx.telegram,
       { coin, price: level, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: level },
@@ -1042,9 +1480,6 @@ async function testFull(ctx) {
   await ctx.reply(`Pipeline check results\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${results.join('\n')}`);
 }
 
-// Failure injection — exercises the REAL failure-handling code paths
-// (not a simulation narrated in text) so the admin-notification behavior
-// can be verified without waiting for an actual outage.
 async function testFailure(ctx, kind) {
   if (kind === 'binance') {
     try {
@@ -1075,15 +1510,24 @@ async function testFailure(ctx, kind) {
 // ---------------------------------------------------------------------------
 async function handleGuidedInput(ctx, pending) {
   const text = ctx.message.text.trim();
+
+  if (text === '/cancel') {
+    await ctx.reply('Cancelled.');
+    return;
+  }
+
   const parts = text.split(/\s+/);
 
-  if (pending.action === 'addcoin') return runAddCoin(ctx, parts);
+  if (pending.action === 'addcoin') return stageAddCoin(ctx, parts);
   if (pending.action === 'addchannel') return runAddChannel(ctx, parts);
   if (pending.action === 'addvar') return runSetVar(ctx, parts[0], parts.slice(1).join(' '));
   if (pending.action === 'addschedule') return runAddSchedule(ctx, parts);
+  if (pending.action === 'editschedule') return runAddSchedule(ctx, parts, pending.context.id);
   if (pending.action === 'addrule') return runAddRule(ctx, text);
+  if (pending.action === 'editrule') return runAddRule(ctx, text, pending.context.id);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
+  if (pending.action === 'importconfig') return runImportConfig(ctx, text);
 
   await ctx.reply("Sorry, I lost track of what you were entering — please tap the button again.");
 }
@@ -1097,10 +1541,19 @@ module.exports = {
   statsCmd,
   settingsCmd,
   thresholdsCmd,
-  thresholdEditScreen,
   thresholdAdjust,
   setThreshold,
   undoThreshold,
+  coinSettingsMenuScreen,
+  coinSettingsScreen,
+  milestonesCmd,
+  milestoneAdjust,
+  milestoneToggle,
+  setMilestoneCmd,
+  cooldownAdjust,
+  cooldownResetBtn,
+  setCooldownCmd,
+  resetCooldownCmd,
   pause,
   resume,
   pauseMenuScreen,
@@ -1124,6 +1577,8 @@ module.exports = {
   chartCmd,
   postChartCmd,
   addCoinCmd,
+  addCoinConfirmExecute,
+  addCoinCancel,
   historyCmd,
   channelsScreen,
   channelsListCmd,
@@ -1132,7 +1587,10 @@ module.exports = {
   removeChannelCmd,
   channelDel,
   setDefaultChannelCmd,
+  clearDefaultChannelTypeCmd,
   channelSetDefault,
+  broadcastMenuScreen,
+  broadcastPick,
   captionTypesScreen,
   captionDetailScreen,
   captionEditStart,
@@ -1151,12 +1609,20 @@ module.exports = {
   scheduleAddStart,
   scheduleCmd,
   scheduleDel,
+  scheduleEditStart,
   rulesScreen,
   rulesListCmd,
   ruleAddStart,
   ruleCmd,
   ruleDel,
+  ruleEditStart,
   broadcastCmd,
+  exportConfigCmd,
+  importConfigCmd,
+  resetCmd,
+  resetMenuScreen,
+  resetConfirmScreen,
+  resetExecute,
   whoami,
   digestNowCmd,
   testAlert,

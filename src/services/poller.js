@@ -7,6 +7,8 @@ const alertsLogDb = require('../db/alertsLog');
 const settingsDb = require('../db/settings');
 const heartbeatDb = require('../db/heartbeat');
 const channelsDb = require('../db/channels');
+const milestonesDb = require('../db/milestones');
+const cooldownsDb = require('../db/cooldowns');
 const events = require('../db/events');
 const telegramSender = require('./telegramSender');
 const rulesEngine = require('./rulesEngine');
@@ -20,10 +22,10 @@ function coinBySymbol(symbol) {
   return config.coins.find((c) => c.symbol === symbol);
 }
 
-function cooldownActive(lastAlertAt) {
+function cooldownActive(lastAlertAt, cooldownMinutes) {
   if (!lastAlertAt) return false;
   const elapsedMs = Date.now() - new Date(lastAlertAt).getTime();
-  return elapsedMs < config.cooldownMinutes * 60 * 1000;
+  return elapsedMs < cooldownMinutes * 60 * 1000;
 }
 
 function muteActive(pausedUntil) {
@@ -63,12 +65,14 @@ async function resolvePauseState() {
 }
 
 // Milestone check: has price crossed into a new step-multiple band since
-// the last time we alerted on one? Independent of the threshold/cooldown
-// system — its own natural "cooldown" is that price has to move a full
-// step to re-trigger. Returns an alert object or null.
-function checkMilestone(coin, price, lastMilestone) {
-  if (!coin.milestoneStep || coin.isStable) return null;
-  const level = Math.floor(price / coin.milestoneStep) * coin.milestoneStep;
+// the last time we alerted on one? step: the coin's EFFECTIVE step (a
+// /setmilestone override, or the factory default from coins.js) — null
+// means milestones are off for this coin. Independent of the threshold/
+// cooldown system — its own natural "cooldown" is that price has to move
+// a full step to re-trigger. Returns an alert object or null.
+function checkMilestone(coin, price, step, lastMilestone) {
+  if (!step || coin.isStable) return null;
+  const level = Math.floor(price / step) * step;
   if (lastMilestone === null || lastMilestone === undefined) return { seedOnly: true, level };
   if (level === lastMilestone) return null;
   return { seedOnly: false, level, direction: level > lastMilestone ? 'up' : 'down' };
@@ -86,8 +90,11 @@ async function tickInner(bot) {
   const paused = await resolvePauseState();
   if (paused) return;
 
-  const defaultChannel = await channelsDb.getDefault();
-  if (!defaultChannel) {
+  const [thresholdChannel, milestoneChannel] = await Promise.all([
+    channelsDb.resolveForType('threshold'),
+    channelsDb.resolveForType('milestone'),
+  ]);
+  if (!thresholdChannel && !milestoneChannel) {
     if (!noDefaultChannelWarned) {
       noDefaultChannelWarned = true;
       logger.error('No default channel configured — alerts have nowhere to go. Run migrations or /addchannel + /setdefaultchannel.');
@@ -96,7 +103,12 @@ async function tickInner(bot) {
   }
   noDefaultChannelWarned = false;
 
-  const [thresholds, coinStates] = await Promise.all([thresholdsDb.getAll(), coinStateDb.getAll()]);
+  const [thresholds, coinStates, milestoneSteps, cooldownOverrides] = await Promise.all([
+    thresholdsDb.getAll(),
+    coinStateDb.getAll(),
+    milestonesDb.getAll(),
+    cooldownsDb.getAll(),
+  ]);
 
   let prices;
   try {
@@ -120,9 +132,10 @@ async function tickInner(bot) {
     await coinStateDb.updateLastPrice(coin.symbol, price);
 
     const state = coinStates[coin.symbol] || {};
+    const milestoneInfo = milestoneSteps.get(coin.symbol) || { step: coin.milestoneStep };
 
-    if (!muteActive(state.pausedUntil)) {
-      const milestone = checkMilestone(coin, price, state.lastMilestone);
+    if (!muteActive(state.pausedUntil) && milestoneChannel) {
+      const milestone = checkMilestone(coin, price, milestoneInfo.step, state.lastMilestone);
       if (milestone) {
         await coinStateDb.setLastMilestone(coin.symbol, milestone.level);
         if (!milestone.seedOnly) {
@@ -134,6 +147,7 @@ async function tickInner(bot) {
             direction: milestone.direction,
             alertType: 'milestone',
             milestoneLevel: milestone.level,
+            channel: milestoneChannel,
           });
         }
       }
@@ -144,7 +158,7 @@ async function tickInner(bot) {
       if (seeded) continue; // first-run baseline — no threshold alert on the very first tick
     }
 
-    if (muteActive(state.pausedUntil)) continue;
+    if (muteActive(state.pausedUntil) || !thresholdChannel) continue;
 
     const threshold = thresholds[coin.symbol];
     const baseline = state.lastAlertPrice;
@@ -152,7 +166,9 @@ async function tickInner(bot) {
 
     const { qualifies, changeUsd, changePct } = qualifiesForThresholdAlert(price, baseline, threshold);
     if (!qualifies) continue;
-    if (cooldownActive(state.lastAlertAt)) continue;
+
+    const cooldownMinutes = cooldownOverrides[coin.symbol] ?? config.cooldownMinutes;
+    if (cooldownActive(state.lastAlertAt, cooldownMinutes)) continue;
 
     const direction = changeUsd >= 0 ? 'up' : 'down';
     toSend.push({
@@ -163,7 +179,8 @@ async function tickInner(bot) {
       direction,
       alertType: 'threshold',
       threshold,
-      cooldownRemainingMs: config.cooldownMinutes * 60 * 1000,
+      cooldownRemainingMs: cooldownMinutes * 60 * 1000,
+      channel: thresholdChannel,
     });
   }
 
@@ -196,7 +213,7 @@ async function tickInner(bot) {
   // Telegram's per-chat rate limit even if every coin alerts in the same
   // tick, and avoids rendering more than one image in memory at a time.
   for (const alert of capped) {
-    const sent = await telegramSender.sendAlert(bot.telegram, alert, defaultChannel);
+    const sent = await telegramSender.sendAlert(bot.telegram, alert, alert.channel);
     if (sent) {
       if (alert.alertType === 'threshold') {
         await coinStateDb.recordAlert(alert.coin.symbol, alert.price);
@@ -207,7 +224,7 @@ async function tickInner(bot) {
         alert.changeUsd || 0,
         alert.direction,
         alert.alertType,
-        defaultChannel.name
+        alert.channel.name
       );
       // Automation: any rule watching this trigger fires now, independent
       // of whether the primary send is the only thing the admin wanted.
@@ -237,4 +254,4 @@ async function tick(bot) {
   }
 }
 
-module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert };
+module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone };

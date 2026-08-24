@@ -45,4 +45,50 @@ async function resolve(name) {
   return getDefault();
 }
 
-module.exports = { getAll, get, getDefault, add, remove, setDefault, resolve };
+// Per-alert-type default (e.g. milestones -> one channel, everything else
+// -> another). Falls back to the overall default if no type-specific one
+// is set. alertType: 'threshold' | 'milestone' | 'manual' | 'chart' | 'digest'.
+async function resolveForType(alertType) {
+  const { rows } = await pool.query(
+    `SELECT c.name, c.chat_id, c.is_default
+     FROM default_channels_by_type d
+     JOIN channels c ON c.name = d.channel_name
+     WHERE d.alert_type = $1`,
+    [alertType]
+  );
+  if (rows.length) return { name: rows[0].name, chatId: rows[0].chat_id, isDefault: rows[0].is_default };
+  return getDefault();
+}
+
+async function getDefaultsByType() {
+  const { rows } = await pool.query('SELECT alert_type, channel_name FROM default_channels_by_type');
+  const map = {};
+  for (const row of rows) map[row.alert_type] = row.channel_name;
+  return map;
+}
+
+async function setDefaultForType(alertType, channelName) {
+  await pool.query(
+    `INSERT INTO default_channels_by_type (alert_type, channel_name) VALUES ($1, $2)
+     ON CONFLICT (alert_type) DO UPDATE SET channel_name = $2`,
+    [alertType, channelName]
+  );
+}
+
+async function clearDefaultForType(alertType) {
+  await pool.query('DELETE FROM default_channels_by_type WHERE alert_type = $1', [alertType]);
+}
+
+module.exports = {
+  getAll,
+  get,
+  getDefault,
+  add,
+  remove,
+  setDefault,
+  resolve,
+  resolveForType,
+  getDefaultsByType,
+  setDefaultForType,
+  clearDefaultForType,
+};

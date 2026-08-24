@@ -2,9 +2,17 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const format = require('../utils/format');
 const marketData = require('./marketData');
-const settingsDb = require('../db/settings');
+const channelsDb = require('../db/channels');
 
-let intervalHandle = null;
+// As of v0.4.0, digests are fired by automationScheduler.js reading the
+// `schedules` table (kind='digest') — this lets a digest run on any
+// cadence (hourly/daily/weekly), not just once a day, and show up
+// alongside every other automation in /schedules. migrate.js seeds one
+// default daily schedule from DIGEST_HOUR_UTC/DIGEST_ENABLED the first
+// time it runs against a fresh install; after that, DIGEST_HOUR_UTC has
+// no further effect — edit or add digest schedules via /schedule instead.
+// This module now only builds the message and sends it — no more of its
+// own interval loop.
 
 function todayUtcDateStr() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -31,7 +39,7 @@ function buildDigestMessage(priceMap, statsMap) {
     lines.push(`${coin.symbol.padEnd(5, ' ')} ${priceStr}${changeStr}`);
   }
 
-  const header = `\uD83D\uDCCA <b>Daily digest</b> \u2014 ${todayUtcDateStr()} UTC`;
+  const header = `\uD83D\uDCCA <b>Digest</b> \u2014 ${todayUtcDateStr()} UTC`;
   const bigMoverLine = biggestMover
     ? `\n\n\uD83D\uDD25 Big mover: <b>${biggestMover.symbol}</b> ${biggestMover.pct >= 0 ? '\u25B2' : '\u25BC'} ${format.formatPct(
         biggestMover.pct
@@ -43,46 +51,32 @@ function buildDigestMessage(priceMap, statsMap) {
   )}${bigMoverLine}\n\n@PricePing`;
 }
 
-async function sendDigestIfDue(bot) {
-  if (!config.digestEnabled) return;
-
-  const now = new Date();
-  if (now.getUTCHours() !== config.digestHourUtc) return;
-
-  const lastSent = await settingsDb.getLastDigestDate();
-  const today = todayUtcDateStr();
-  if (lastSent === today) return; // already sent today
+// Called by automationScheduler.js when a schedule with kind='digest' is
+// due. channelName: which registered channel to post to.
+async function sendDigestToChannel(telegram, channelName) {
+  const channel = await channelsDb.resolve(channelName);
+  if (!channel) {
+    logger.warn(`Digest schedule: unknown channel "${channelName}"`);
+    return false;
+  }
 
   let priceMap;
   let statsMap;
   try {
     [priceMap, statsMap] = await Promise.all([marketData.fetchAllPrices(), marketData.fetchAll24hrStats()]);
   } catch (err) {
-    logger.warn('Digest: failed to fetch market data, will retry next check', { message: err.message });
-    return;
+    logger.warn('Digest: failed to fetch market data', { message: err.message });
+    return false;
   }
 
   const message = buildDigestMessage(priceMap, statsMap);
-
   try {
-    await bot.telegram.sendMessage(config.channelId, message, { parse_mode: 'HTML' });
-    await settingsDb.setLastDigestDate(today);
-    logger.info('Sent daily digest');
+    await telegram.sendMessage(channel.chatId, message, { parse_mode: 'HTML' });
+    return true;
   } catch (err) {
-    logger.error('Failed to send daily digest', { message: err.message });
+    logger.error('Failed to send digest', { message: err.message });
+    return false;
   }
 }
 
-// Checked every 5 minutes rather than tied to the poll tick — keeps digest
-// timing independent of POLL_INTERVAL_MS changes.
-function init(bot) {
-  intervalHandle = setInterval(() => {
-    sendDigestIfDue(bot).catch((err) => logger.error('Digest check failed', { message: err.message }));
-  }, 5 * 60 * 1000);
-}
-
-function stop() {
-  if (intervalHandle) clearInterval(intervalHandle);
-}
-
-module.exports = { init, stop, buildDigestMessage, sendDigestIfDue };
+module.exports = { buildDigestMessage, sendDigestToChannel };

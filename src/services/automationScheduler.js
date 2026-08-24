@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const schedulesDb = require('../db/schedules');
 const actions = require('./actions');
+const digest = require('./digest');
 
 // Checked every 5 minutes, same pattern as digest.js — deliberately not
 // tied to POLL_INTERVAL_MS so alert-tick timing changes never affect
@@ -59,6 +60,9 @@ async function checkAndRun(bot) {
         result = await actions.postPriceUpdate(bot.telegram, schedule.symbol, schedule.channelName);
       } else if (schedule.kind === 'chart') {
         result = await actions.postChartAction(bot.telegram, schedule.symbol, schedule.period || '24h', schedule.channelName);
+      } else if (schedule.kind === 'digest') {
+        const ok = await digest.sendDigestToChannel(bot.telegram, schedule.channelName);
+        result = { ok, message: ok ? 'digest sent' : 'digest send failed' };
       }
       if (result && !result.ok) {
         logger.warn(`Schedule ${schedule.id} ran but failed`, { message: result.message });

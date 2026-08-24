@@ -51,9 +51,17 @@ async function recent(limit = 10) {
   return rows;
 }
 
-async function recentForSymbol(symbol, limit = 10) {
+async function recentForSymbol(symbol, limit = 10, channelName = null) {
+  if (channelName) {
+    const { rows } = await pool.query(
+      `SELECT symbol, price, change_usd, direction, alert_type, channel_name, created_at
+       FROM alerts_log WHERE symbol = $1 AND channel_name = $2 ORDER BY created_at DESC LIMIT $3`,
+      [symbol, channelName, limit]
+    );
+    return rows;
+  }
   const { rows } = await pool.query(
-    `SELECT symbol, price, change_usd, direction, alert_type, created_at
+    `SELECT symbol, price, change_usd, direction, alert_type, channel_name, created_at
      FROM alerts_log WHERE symbol = $1 ORDER BY created_at DESC LIMIT $2`,
     [symbol, limit]
   );

@@ -24,11 +24,19 @@ async function evaluate(telegram, alert) {
     return;
   }
 
-  const matching = rules.filter(
-    (r) =>
-      (r.triggerType === 'any_alert' || r.triggerType === alert.alertType) &&
-      (!r.triggerSymbol || r.triggerSymbol === alert.coin.symbol)
-  );
+  const matching = rules.filter((r) => {
+    if (r.triggerType !== 'any_alert' && r.triggerType !== alert.alertType) return false;
+    if (r.triggerSymbol && r.triggerSymbol !== alert.coin.symbol) return false;
+    // A magnitude condition only makes sense against a %-move alert
+    // (threshold). Milestone/manual/any_alert triggers have no changePct
+    // to compare, so a rule with a minMovePct set simply never fires for
+    // those — documented in /help for /addrule.
+    if (r.minMovePct !== null && r.minMovePct !== undefined) {
+      if (alert.changePct === null || alert.changePct === undefined) return false;
+      if (Math.abs(alert.changePct) < r.minMovePct) return false;
+    }
+    return true;
+  });
 
   for (const rule of matching) {
     try {

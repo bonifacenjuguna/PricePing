@@ -6,6 +6,7 @@ const telegramSender = require('./telegramSender');
 const channelsDb = require('../db/channels');
 const coinStateDb = require('../db/coinState');
 const alertsLogDb = require('../db/alertsLog');
+const recentCoins = require('./recentCoins');
 
 // Shared by commands.js (manual button/slash-command use) and
 // automationScheduler.js (unattended recurring use) — one implementation,
@@ -58,6 +59,7 @@ async function postPriceUpdate(telegram, symbol, channelName) {
   // alert doesn't fire moments later for the same already-announced move.
   await coinStateDb.recordAlert(symbol, price);
   await alertsLogDb.record(symbol, price, 0, 'up', 'manual', channel.name);
+  recentCoins.noteCoin(symbol);
   return { ok: true, message: `Posted ${symbol} to #${channel.name}.` };
 }
 
@@ -86,6 +88,7 @@ async function postChartAction(telegram, symbol, periodKey, channelName) {
 
   const buffer = await chartRenderer.renderChart({ coin, candles, periodKey });
   const sent = await telegramSender.sendChart(telegram, { coin, buffer, periodLabel: preset.label }, channel);
+  if (sent) recentCoins.noteCoin(symbol);
   return sent
     ? { ok: true, message: `Chart posted for ${symbol} to #${channel.name}.` }
     : { ok: false, message: `Could not post chart for ${symbol}.` };

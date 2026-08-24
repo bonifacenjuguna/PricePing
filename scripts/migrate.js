@@ -68,6 +68,19 @@ async function main() {
       `use /addrule to mirror specific alerts there now, or /post SYMBOL secondary to post manually.`);
   }
 
+  console.log('Seeding default digest schedule (only if no digest schedule exists yet)...');
+  if (config.digestEnabled) {
+    const existing = await pool.query(`SELECT id FROM schedules WHERE kind = 'digest' LIMIT 1`);
+    if (!existing.rows.length) {
+      await pool.query(
+        `INSERT INTO schedules (kind, symbol, channel_name, cadence, at_minute_utc, at_hour_utc)
+         VALUES ('digest', 'ALL', 'main', 'daily', 0, $1)`,
+        [config.digestHourUtc]
+      );
+      console.log(`  Seeded a daily digest schedule at ${config.digestHourUtc}:00 UTC -> #main. Edit or add more via /schedule.`);
+    }
+  }
+
   console.log('Migration complete.');
   await pool.end();
 }

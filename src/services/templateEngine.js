@@ -133,9 +133,16 @@ function nextMilestone(price, step) {
   return (Math.floor(price / step) + 1) * step;
 }
 
+// Looks up a symbol-specific override first (key "type:SYMBOL", e.g.
+// "threshold:BTC" — set via /setcaption threshold:BTC <template>), then
+// falls back to the type-wide custom template, then the built-in default.
 async function renderCaption(alertType, ctx) {
-  const custom = await templatesDb.get(alertType);
-  const template = custom || DEFAULT_TEMPLATES[alertType] || DEFAULT_TEMPLATES.threshold;
+  const symbol = ctx.coin && ctx.coin.symbol;
+  let template = null;
+  if (symbol) template = await templatesDb.get(`${alertType}:${symbol}`);
+  if (!template) template = await templatesDb.get(alertType);
+  if (!template) template = DEFAULT_TEMPLATES[alertType] || DEFAULT_TEMPLATES.threshold;
+
   const customVars = await customVarsDb.getAll();
   const baseVars = buildVariables(ctx);
   const vars = { ...baseVars, ...applyCustomVarsWithoutOverride(customVars, baseVars) };
