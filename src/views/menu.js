@@ -148,6 +148,9 @@ function hub() {
     ],
     [
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
+      { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
+    ],
+    [
       { text: '\u267B Reset', callback_data: 'nav:reset' },
     ],
     HOME_ROW,
@@ -254,12 +257,13 @@ function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefault
     `Mute        ${muteStr}`;
 
   const keyboard = [
-    [{ text: '\uD83C\uDFDA Threshold \u2212', callback_data: `threshold:dec:${symbol}` }, { text: '+', callback_data: `threshold:inc:${symbol}` }],
-    [{ text: '\uD83C\uDFAF Milestone \u2212', callback_data: `milestone:dec:${symbol}` }, { text: '+', callback_data: `milestone:inc:${symbol}` }],
+    [{ text: '\uD83C\uDFDA Threshold \u2212', callback_data: `threshold:dec:${symbol}` }, { text: '+', callback_data: `threshold:inc:${symbol}` }, { text: '\u270F Exact', callback_data: `threshold:setexact:${symbol}` }],
+    [{ text: '\uD83C\uDFAF Milestone \u2212', callback_data: `milestone:dec:${symbol}` }, { text: '+', callback_data: `milestone:inc:${symbol}` }, { text: '\u270F Exact', callback_data: `milestone:setexact:${symbol}` }],
     [{ text: milestone.isDisabled ? '\uD83C\uDFAF Enable milestones' : '\uD83C\uDFAF Disable milestones', callback_data: `milestone:toggle:${symbol}` }],
     [{ text: '\u23F1 Cooldown \u2212', callback_data: `cooldown:dec:${symbol}` }, { text: '+', callback_data: `cooldown:inc:${symbol}` }],
     isDefaultCooldown ? [] : [{ text: '\u21A9 Reset cooldown to default', callback_data: `cooldown:reset:${symbol}` }],
     [{ text: '\uD83D\uDD07 Mute', callback_data: `mute:coin:${symbol}` }],
+    [{ text: '\uD83D\uDCDC History', callback_data: `history:coin:${symbol}` }],
     ...footer('nav:thresholds'),
   ].filter((row) => row.length);
 
@@ -277,13 +281,25 @@ function milestoneList(milestoneMap) {
     .join('\n');
   const text = `Milestone steps\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\nTap a coin for full settings.`;
   const coinButtons = config.coins.map((c) => ({ text: c.symbol, callback_data: `coin:settings:${c.symbol}` }));
-  return { text, keyboard: [...chunk(coinButtons, 3), HOME_ROW] };
+  return { text, keyboard: [...chunk(coinButtons, 3), ...footer('nav:coinsettings')] };
 }
 
 // ---------- Mute ----------
-function muteMenu(recentSymbols = []) {
-  const text = 'Mute a coin \u2014 pick one:';
-  return { text, keyboard: coinGrid('mute:coin', { recentSymbols }) };
+function muteMenu(recentSymbols = [], mutedMap = {}) {
+  const mutedEntries = Object.entries(mutedMap).filter(([, until]) => until && new Date(until).getTime() > Date.now());
+  const summary = mutedEntries.length
+    ? `Currently muted: ${mutedEntries.map(([s, u]) => `${s} (${formatRemaining(new Date(u).getTime() - Date.now())})`).join(', ')}\n\n`
+    : '';
+  const text = `${summary}Mute a coin \u2014 pick one:`;
+
+  const recentRow = recentSymbols.length
+    ? [recentSymbols.map((s) => ({ text: `\uD83D\uDD52 ${s}`, callback_data: `mute:coin:${s}` }))]
+    : [];
+  const buttons = config.coins.map((c) => ({
+    text: mutedMap[c.symbol] && new Date(mutedMap[c.symbol]).getTime() > Date.now() ? `\uD83D\uDD07 ${c.symbol}` : c.symbol,
+    callback_data: `mute:coin:${c.symbol}`,
+  }));
+  return { text, keyboard: [...recentRow, ...chunk(buttons, 3), ...footer('nav:hub')] };
 }
 
 function muteDurationPicker(symbol) {
@@ -317,6 +333,7 @@ function automationHub() {
   const keyboard = [
     [{ text: '\uD83D\uDCC5 Schedules', callback_data: 'nav:schedules' }],
     [{ text: '\u26A1 Rules', callback_data: 'nav:rules' }],
+    [{ text: '\uD83D\uDCCA Send digest now', callback_data: 'digest:now' }],
     ...footer('nav:hub'),
   ];
   return { text, keyboard };
@@ -373,22 +390,40 @@ function channelList(channels, defaultsByType) {
     ? channels.map((c) => `${c.isDefault ? '\u2B50' : '  '} ${c.name.padEnd(10, ' ')} ${c.chatId}`).join('\n')
     : 'No channels registered.';
 
-  const typeLines = Object.entries(defaultsByType || {})
-    .map(([type, name]) => `${type} \u2192 #${name}`)
-    .join('\n');
+  const typeEntries = Object.entries(defaultsByType || {});
+  const typeLines = typeEntries.map(([type, name]) => `${type} \u2192 #${name}`).join('\n');
 
   const text =
     `Channels\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n\u2B50 = overall default` +
-    (typeLines ? `\n\nPer-type overrides:\n${typeLines}` : '') +
-    `\n\nSet a per-type default: /setdefaultchannel name threshold|milestone|manual|chart|digest`;
+    (typeLines ? `\n\nPer-type overrides:\n${typeLines}` : '');
   const rows = channels
     .filter((c) => !c.isDefault)
     .map((c) => [
       { text: `\u2B50 Make ${c.name} default`, callback_data: `channel:setdefault:${c.name}` },
       { text: `\u2716 Remove`, callback_data: `channel:del:${c.name}` },
     ]);
-  const keyboard = [...rows, [{ text: '\u2795 Add channel', callback_data: 'channel:add' }], [{ text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' }], ...footer('nav:hub')];
+  const clearTypeRows = typeEntries.map(([type]) => [{ text: `\u2716 Clear ${type} default`, callback_data: `channel:cleartypedefault:${type}` }]);
+  const keyboard = [
+    ...rows,
+    ...clearTypeRows,
+    [{ text: '\u2795 Add channel', callback_data: 'channel:add' }],
+    [{ text: '\uD83C\uDFAF Set per-type default', callback_data: 'channel:typedefault' }],
+    [{ text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' }],
+    ...footer('nav:hub'),
+  ];
   return { text, keyboard };
+}
+
+function channelTypePicker() {
+  const text = 'Set a default channel for which alert type?';
+  const types = ['threshold', 'milestone', 'manual', 'chart', 'digest'];
+  const buttons = types.map((t) => ({ text: t, callback_data: `channel:typedefault:${t}` }));
+  return { text, keyboard: [...chunk(buttons, 2), ...footer('nav:channels')] };
+}
+
+function channelTypeDefaultPicker(alertType, channels) {
+  const text = `Default channel for "${alertType}" alerts?`;
+  return { text, keyboard: channelPicker(`channel:settypedefault:${alertType}`, channels, [backRow('channel:typedefault')]) };
 }
 
 function broadcastChannelPicker(channels) {
@@ -412,8 +447,27 @@ function captionDetail(alertType, currentTemplate, isCustom) {
     [{ text: '\u270F Edit', callback_data: `caption:edit:${alertType}` }],
     [{ text: '\uD83D\uDC41 Preview', callback_data: `caption:preview:${alertType}` }],
     isCustom ? [{ text: '\u21A9 Reset to default', callback_data: `caption:reset:${alertType}` }] : [],
+    [{ text: '\uD83C\uDFAF Per-coin overrides', callback_data: `caption:overrides:${alertType}` }],
     [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }],
     ...footer('nav:captiontypes'),
+  ].filter((row) => row.length);
+  return { text, keyboard };
+}
+
+function captionCoinPicker(alertType, recentSymbols = []) {
+  const text = `Per-coin override for "${alertType}" \u2014 pick a coin:`;
+  return { text, keyboard: coinGrid(`caption:coinpick:${alertType}`, { recentSymbols, parentCallback: `caption:type:${alertType}` }) };
+}
+
+function captionCoinDetail(alertType, symbol, currentTemplate, isCustom) {
+  const text =
+    `Caption \u2014 ${alertType}:${symbol}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `${isCustom ? '(custom override)' : `(no override set \u2014 using the shared "${alertType}" template)`}\n\n${currentTemplate}`;
+  const keyboard = [
+    [{ text: '\u270F Edit', callback_data: `caption:coinedit:${alertType}:${symbol}` }],
+    [{ text: '\uD83D\uDC41 Preview', callback_data: `caption:coinpreview:${alertType}:${symbol}` }],
+    isCustom ? [{ text: '\u21A9 Reset (remove override)', callback_data: `caption:coinreset:${alertType}:${symbol}` }] : [],
+    ...footer(`caption:overrides:${alertType}`),
   ].filter((row) => row.length);
   return { text, keyboard };
 }
@@ -422,18 +476,65 @@ function variablesHelp(docs) {
   const lines = docs.map((g) => `${g.group}:\n  ${g.vars.map((v) => `{${v}}`).join('  ')}`).join('\n\n');
   const text =
     `Available caption variables\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}\n\n` +
-    `A line containing a variable that doesn't apply (e.g. {change_pct} on a milestone alert) is dropped automatically \u2014 no need for if/else syntax.\n\n` +
-    `Add your own with /setvar name value, then use {name} anywhere.`;
-  return { text, keyboard: footer('nav:captiontypes') };
+    `A line containing a variable that doesn't apply (e.g. {change_pct} on a milestone alert) is dropped automatically \u2014 no need for if/else syntax.`;
+  const keyboard = [[{ text: '\uD83D\uDD27 My custom variables', callback_data: 'nav:varsmanage' }], ...footer('nav:captiontypes')];
+  return { text, keyboard };
 }
 
 // ---------- Coin settings entry grid (from hub) ----------
 function coinSettingsMenu(recentSymbols = []) {
   const text = 'Coin settings \u2014 pick a coin (threshold, milestone, cooldown, mute in one screen):';
-  return { text, keyboard: coinGrid('coin:settings', { recentSymbols }) };
+  const keyboard = coinGrid('coin:settings', {
+    recentSymbols,
+    extraRows: [
+      [
+        { text: '\uD83C\uDFAF All milestones', callback_data: 'nav:milestones' },
+        { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
+      ],
+    ],
+  });
+  return { text, keyboard };
 }
 
-// ---------- Reset ----------
+// ---------- History ----------
+function historyMenu(recentSymbols = []) {
+  const text = 'History \u2014 pick a coin:';
+  return { text, keyboard: coinGrid('history:coin', { recentSymbols }) };
+}
+
+function historyDetail(symbol, lines, channels, activeChannel) {
+  const text =
+    `Recent ${symbol} activity${activeChannel ? ` (#${activeChannel})` : ''}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    (lines.length ? lines.join('\n') : 'No alerts logged yet.');
+
+  const filterButtons = channels
+    .filter((c) => c.name !== activeChannel)
+    .map((c) => ({ text: `#${c.name}`, callback_data: `history:filter:${symbol}:${c.name}` }));
+  const allRow = activeChannel ? [[{ text: '\uD83D\uDD04 All channels', callback_data: `history:coin:${symbol}` }]] : [];
+
+  return { text, keyboard: [...allRow, ...chunk(filterButtons, 2), ...footer('nav:history')] };
+}
+
+// ---------- Custom variables management ----------
+function varsList(varsMap) {
+  const entries = Object.entries(varsMap);
+  const text = `Your custom variables\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${
+    entries.length ? entries.map(([name, value]) => `{${name}} \u2192 ${value}`).join('\n') : 'None set yet.'
+  }`;
+  const delButtons = entries.map(([name]) => ({ text: `\u2716 {${name}}`, callback_data: `var:del:${name}` }));
+  return { text, keyboard: [...chunk(delButtons, 2), [{ text: '\u2795 Add variable', callback_data: 'var:add' }], ...footer('nav:variables')] };
+}
+
+// ---------- Backup ----------
+function backupMenu() {
+  const text = 'Backup \u2014 export every setting as a JSON file, or restore from a previous export.';
+  const keyboard = [
+    [{ text: '\uD83D\uDCE4 Export', callback_data: 'backup:export' }],
+    [{ text: '\uD83D\uDCE5 Import', callback_data: 'backup:import' }],
+    ...footer('nav:settings'),
+  ];
+  return { text, keyboard };
+}
 function resetMenu() {
   const text = 'Reset \u2014 pick what to reset back to defaults. Nothing happens until you confirm.';
   const options = [
@@ -517,7 +618,14 @@ function settings() {
     `Memory limit      ${config.memoryLimitMb}MB\n\n` +
     `These are environment variables and take effect on next restart. ` +
     `Channels, captions, thresholds, milestones, cooldowns, schedules (including digests), and rules are all live \u2014 see /commands.`;
-  const keyboard = [HUB_ROW, HOME_ROW];
+  const keyboard = [
+    [
+      { text: '\uD83D\uDCBE Backup', callback_data: 'nav:backup' },
+      { text: '\uD83D\uDC64 Who am I', callback_data: 'nav:whoami' },
+    ],
+    HUB_ROW,
+    HOME_ROW,
+  ];
   return { text, keyboard };
 }
 
@@ -577,10 +685,18 @@ module.exports = {
   scheduleList,
   ruleList,
   channelList,
+  channelTypePicker,
+  channelTypeDefaultPicker,
   broadcastChannelPicker,
   captionTypes,
   captionDetail,
+  captionCoinPicker,
+  captionCoinDetail,
   variablesHelp,
+  varsList,
+  historyMenu,
+  historyDetail,
+  backupMenu,
   resetMenu,
   resetConfirm,
   addCoinConfirm,

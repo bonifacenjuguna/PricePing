@@ -55,6 +55,16 @@ async function onCallback(ctx) {
           return commands.rulesScreen(ctx);
         case 'coinsettings':
           return commands.coinSettingsMenuScreen(ctx);
+        case 'milestones':
+          return commands.milestonesScreen(ctx);
+        case 'history':
+          return commands.historyMenuScreen(ctx);
+        case 'varsmanage':
+          return commands.varsManageScreen(ctx);
+        case 'backup':
+          return commands.backupMenuScreen(ctx);
+        case 'whoami':
+          return commands.whoami(ctx);
         case 'reset':
           return commands.resetMenuScreen(ctx);
         case 'broadcastmenu':
@@ -94,6 +104,9 @@ async function onCallback(ctx) {
       if (a1 === 'inc' || a1 === 'dec') {
         return commands.thresholdAdjust(ctx, a2, a1);
       }
+      if (a1 === 'setexact') {
+        return commands.thresholdSetExactStart(ctx, a2);
+      }
       return undefined;
     }
 
@@ -113,6 +126,9 @@ async function onCallback(ctx) {
       }
       if (a1 === 'toggle') {
         return commands.milestoneToggle(ctx, a2);
+      }
+      if (a1 === 'setexact') {
+        return commands.milestoneSetExactStart(ctx, a2);
       }
       return undefined;
     }
@@ -184,7 +200,7 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- channel:add|del|setdefault ----
+    // ---- channel:add|del|setdefault|typedefault|settypedefault|cleartypedefault ----
     if (ns === 'channel') {
       if (a1 === 'add') {
         return commands.channelAddStart(ctx);
@@ -194,6 +210,60 @@ async function onCallback(ctx) {
       }
       if (a1 === 'setdefault') {
         return commands.channelSetDefault(ctx, a2);
+      }
+      if (a1 === 'typedefault' && !a2) {
+        return commands.channelTypeDefaultScreen(ctx);
+      }
+      if (a1 === 'typedefault' && a2) {
+        return commands.channelTypeDefaultChannelScreen(ctx, a2);
+      }
+      if (a1 === 'settypedefault') {
+        return commands.channelSetTypeDefaultExecute(ctx, a2, a3);
+      }
+      if (a1 === 'cleartypedefault') {
+        return commands.channelClearTypeDefault(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- history:coin:SYMBOL | history:filter:SYMBOL:CHANNEL ----
+    if (ns === 'history') {
+      await ctx.answerCbQuery();
+      if (a1 === 'coin') {
+        return commands.historyCoinScreen(ctx, a2, null);
+      }
+      if (a1 === 'filter') {
+        return commands.historyCoinScreen(ctx, a2, a3);
+      }
+      return undefined;
+    }
+
+    // ---- var:add|del ----
+    if (ns === 'var') {
+      if (a1 === 'add') {
+        return commands.varAddStart(ctx);
+      }
+      if (a1 === 'del') {
+        return commands.varDelBtn(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- backup:export|import ----
+    if (ns === 'backup') {
+      if (a1 === 'export') {
+        return commands.exportConfigButton(ctx);
+      }
+      if (a1 === 'import') {
+        return commands.importConfigButton(ctx);
+      }
+      return undefined;
+    }
+
+    // ---- digest:now ----
+    if (ns === 'digest') {
+      if (a1 === 'now') {
+        return commands.digestNowButton(ctx);
       }
       return undefined;
     }
@@ -206,7 +276,7 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- caption:type|edit|preview|reset:TYPE ----
+    // ---- caption:type|edit|preview|reset|overrides|coinpick|coinedit|coinpreview|coinreset ----
     if (ns === 'caption') {
       if (a1 === 'type') {
         await ctx.answerCbQuery();
@@ -220,6 +290,22 @@ async function onCallback(ctx) {
       }
       if (a1 === 'reset') {
         return commands.captionReset(ctx, a2);
+      }
+      if (a1 === 'overrides') {
+        return commands.captionOverridesScreen(ctx, a2);
+      }
+      if (a1 === 'coinpick') {
+        await ctx.answerCbQuery();
+        return commands.captionCoinDetailScreen(ctx, a2, a3);
+      }
+      if (a1 === 'coinedit') {
+        return commands.captionCoinEditStart(ctx, a2, a3);
+      }
+      if (a1 === 'coinpreview') {
+        return commands.captionCoinPreviewBtn(ctx, a2, a3);
+      }
+      if (a1 === 'coinreset') {
+        return commands.captionCoinResetBtn(ctx, a2, a3);
       }
       return undefined;
     }
@@ -252,8 +338,11 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- addcoin:confirm|cancel ----
+    // ---- addcoin:start|confirm|cancel ----
     if (ns === 'addcoin') {
+      if (a1 === 'start') {
+        return commands.addCoinStart(ctx);
+      }
       if (a1 === 'confirm') {
         return commands.addCoinConfirmExecute(ctx);
       }

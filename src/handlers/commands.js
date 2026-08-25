@@ -191,6 +191,13 @@ async function setThreshold(ctx) {
   });
 }
 
+async function thresholdSetExactStart(ctx, symbol) {
+  const prompt = `Send the exact threshold for ${symbol}, e.g. 400 or 2%`;
+  pendingInput.set('setexactthreshold', { symbol }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
+}
+
 async function undoThreshold(ctx, symbol) {
   const previous = lastThresholdChange.get(symbol);
   if (!previous) {
@@ -230,6 +237,9 @@ async function coinSettingsScreen(ctx, symbol) {
 }
 
 // --- Milestones ---
+async function milestonesScreen(ctx) {
+  await inlineEdit(ctx, menu.milestoneList(await milestonesDb.getAll()));
+}
 async function milestonesCmd(ctx) {
   await inlineReply(ctx, menu.milestoneList(await milestonesDb.getAll()));
 }
@@ -264,6 +274,13 @@ async function milestoneToggle(ctx, symbol) {
     await ctx.answerCbQuery('Milestones enabled');
   }
   await coinSettingsScreen(ctx, symbol);
+}
+
+async function milestoneSetExactStart(ctx, symbol) {
+  const prompt = `Send the exact milestone step for ${symbol}, e.g. 500, or "off" to disable.`;
+  pendingInput.set('setexactmilestone', { symbol }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
 }
 
 async function setMilestoneCmd(ctx) {
@@ -394,7 +411,10 @@ async function unmute(ctx) {
 }
 
 async function muteMenuScreen(ctx) {
-  await inlineEdit(ctx, menu.muteMenu(recentCoins.getRecent()));
+  const states = await coinStateDb.getAll();
+  const mutedMap = {};
+  for (const [symbol, state] of Object.entries(states)) mutedMap[symbol] = state.pausedUntil;
+  await inlineEdit(ctx, menu.muteMenu(recentCoins.getRecent(), mutedMap));
 }
 async function muteDurationScreen(ctx, symbol) {
   await inlineEdit(ctx, menu.muteDurationPicker(symbol));
@@ -515,6 +535,12 @@ async function addCoinCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   await stageAddCoin(ctx, parts.slice(1));
 }
+async function addCoinStart(ctx) {
+  const prompt = 'Send: SYMBOL BINANCEPAIR #HEXCOLOR [Name]\nExample: ADA ADAUSDT #0033AD Cardano';
+  pendingInput.set('addcoin', {}, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
+}
 async function stageAddCoin(ctx, parts) {
   const symbol = (parts[0] || '').toUpperCase();
   const pair = (parts[1] || '').toUpperCase();
@@ -555,6 +581,18 @@ async function addCoinCancel(ctx) {
   await ctx.reply('Cancelled — nothing added.');
 }
 
+async function historyMenuScreen(ctx) {
+  await inlineEdit(ctx, menu.historyMenu(recentCoins.getRecent()));
+}
+async function historyCoinScreen(ctx, symbol, channelName = null) {
+  recentCoins.noteCoin(symbol);
+  const [rows, channels] = await Promise.all([alertsLogDb.recentForSymbol(symbol, 10, channelName), channelsDb.getAll()]);
+  const lines = rows.map((r) => {
+    const arrow = r.direction === 'up' ? '\u25B2' : '\u25BC';
+    return `${format.timeAgo(r.created_at)}  ${arrow} $${format.formatPrice(Number(r.price))}  [${r.alert_type} \u2192 #${r.channel_name}]`;
+  });
+  await inlineEdit(ctx, menu.historyDetail(symbol, lines, channels, channelName));
+}
 async function historyCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
@@ -662,6 +700,25 @@ async function channelSetDefault(ctx, name) {
   await ctx.answerCbQuery(`${name} is now default`);
   await channelsScreen(ctx);
 }
+async function channelTypeDefaultScreen(ctx) {
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.channelTypePicker());
+}
+async function channelTypeDefaultChannelScreen(ctx, alertType) {
+  await ctx.answerCbQuery();
+  const channels = await channelsDb.getAll();
+  await inlineEdit(ctx, menu.channelTypeDefaultPicker(alertType, channels));
+}
+async function channelSetTypeDefaultExecute(ctx, alertType, channelName) {
+  await channelsDb.setDefaultForType(alertType, channelName);
+  await ctx.answerCbQuery(`${alertType} \u2192 ${channelName}`);
+  await channelsScreen(ctx);
+}
+async function channelClearTypeDefault(ctx, alertType) {
+  await channelsDb.clearDefaultForType(alertType);
+  await ctx.answerCbQuery('Cleared');
+  await channelsScreen(ctx);
+}
 
 async function broadcastMenuScreen(ctx) {
   const channels = await channelsDb.getAll();
@@ -695,6 +752,31 @@ async function captionReset(ctx, alertType) {
   await templatesDb.reset(alertType);
   await ctx.answerCbQuery('Reset to default');
   await captionDetailScreen(ctx, alertType);
+}
+async function captionOverridesScreen(ctx, alertType) {
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.captionCoinPicker(alertType, recentCoins.getRecent()));
+}
+async function captionCoinDetailScreen(ctx, alertType, symbol) {
+  const key = `${alertType}:${symbol}`;
+  const custom = await templatesDb.get(key);
+  const template = custom || templateEngine.DEFAULT_TEMPLATES[alertType];
+  await inlineEdit(ctx, menu.captionCoinDetail(alertType, symbol, template, !!custom));
+}
+async function captionCoinEditStart(ctx, alertType, symbol) {
+  const prompt = `Send the new caption template for "${alertType}" — just for ${symbol}. Use {variables} \u2014 see /variables.`;
+  pendingInput.set('setcaption', { alertType: `${alertType}:${symbol}` }, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
+}
+async function captionCoinPreviewBtn(ctx, alertType, symbol) {
+  await ctx.answerCbQuery('Rendering preview...');
+  await sendCaptionPreview(ctx, `${alertType}:${symbol}`);
+}
+async function captionCoinResetBtn(ctx, alertType, symbol) {
+  await templatesDb.reset(`${alertType}:${symbol}`);
+  await ctx.answerCbQuery('Override removed');
+  await captionCoinDetailScreen(ctx, alertType, symbol);
 }
 async function captionPreview(ctx, alertType) {
   await ctx.answerCbQuery('Rendering preview...');
@@ -777,6 +859,20 @@ async function variablesCmd(ctx) {
 }
 async function variablesScreen(ctx) {
   await inlineEdit(ctx, menu.variablesHelp(templateEngine.VARIABLE_DOCS));
+}
+async function varsManageScreen(ctx) {
+  await inlineEdit(ctx, menu.varsList(await customVarsDb.getAll()));
+}
+async function varAddStart(ctx) {
+  const prompt = 'Send: name value (name: letters/numbers/underscore only)\nExample: tagline to the moon';
+  pendingInput.set('addvar', {}, prompt);
+  await ctx.answerCbQuery();
+  await ctx.reply(prompt);
+}
+async function varDelBtn(ctx, name) {
+  await customVarsDb.remove(name);
+  await ctx.answerCbQuery('Removed');
+  await varsManageScreen(ctx);
 }
 async function setVarCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
@@ -1101,6 +1197,17 @@ async function importConfigCmd(ctx) {
   pendingInput.set('importconfig', {}, prompt);
   await ctx.reply(prompt);
 }
+async function backupMenuScreen(ctx) {
+  await inlineEdit(ctx, menu.backupMenu());
+}
+async function exportConfigButton(ctx) {
+  await ctx.answerCbQuery('Exporting...');
+  await exportConfigCmd(ctx);
+}
+async function importConfigButton(ctx) {
+  await ctx.answerCbQuery();
+  await importConfigCmd(ctx);
+}
 async function runImportConfig(ctx, text) {
   let data;
   try {
@@ -1252,6 +1359,10 @@ async function whoami(ctx) {
       `Bot: ${config.botName} v${require('../../package.json').version}`
   );
 }
+async function whoamiButton(ctx) {
+  await ctx.answerCbQuery();
+  await whoami(ctx);
+}
 
 async function digestNowCmd(ctx) {
   const digest = require('../services/digest');
@@ -1264,6 +1375,10 @@ async function digestNowCmd(ctx) {
   } catch (err) {
     await ctx.reply(`Could not send digest: ${err.message}`);
   }
+}
+async function digestNowButton(ctx) {
+  await ctx.answerCbQuery('Sending...');
+  await digestNowCmd(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -1505,6 +1620,44 @@ async function testFailure(ctx, kind) {
   await ctx.reply('Usage: /test fail binance | /test fail telegram');
 }
 
+async function runSetExactThreshold(ctx, symbol, text) {
+  const trimmed = text.trim();
+  let amountRaw = trimmed;
+  let type = 'usd';
+  if (amountRaw.endsWith('%')) {
+    type = 'pct';
+    amountRaw = amountRaw.slice(0, -1);
+  } else if (/\bpct\b/i.test(amountRaw)) {
+    type = 'pct';
+    amountRaw = amountRaw.replace(/pct/i, '').trim();
+  }
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    await ctx.reply('That doesn\'t look like a valid amount. Send e.g. 400 or 2%');
+    return;
+  }
+  const previous = await thresholdsDb.get(symbol);
+  if (previous) lastThresholdChange.set(symbol, previous);
+  await thresholdsDb.set(symbol, amount, type);
+  await ctx.reply(`${symbol} threshold set to ${type === 'pct' ? `${amount}%` : `$${amount}`}.`);
+}
+
+async function runSetExactMilestone(ctx, symbol, text) {
+  const trimmed = text.trim().toLowerCase();
+  if (trimmed === 'off') {
+    await milestonesDb.disable(symbol);
+    await ctx.reply(`${symbol} milestones turned off.`);
+    return;
+  }
+  const step = Number(trimmed);
+  if (!Number.isFinite(step) || step <= 0) {
+    await ctx.reply('That doesn\'t look like a valid step. Send a positive number, or "off".');
+    return;
+  }
+  await milestonesDb.set(symbol, step);
+  await ctx.reply(`${symbol} milestone step set to $${format.formatChangeUsd(step)}.`);
+}
+
 // ---------------------------------------------------------------------------
 // Guided text-input dispatcher — see services/pendingInput.js
 // ---------------------------------------------------------------------------
@@ -1528,6 +1681,8 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
+  if (pending.action === 'setexactthreshold') return runSetExactThreshold(ctx, pending.context.symbol, text);
+  if (pending.action === 'setexactmilestone') return runSetExactMilestone(ctx, pending.context.symbol, text);
 
   await ctx.reply("Sorry, I lost track of what you were entering — please tap the button again.");
 }
@@ -1546,10 +1701,13 @@ module.exports = {
   undoThreshold,
   coinSettingsMenuScreen,
   coinSettingsScreen,
+  milestonesScreen,
   milestonesCmd,
   milestoneAdjust,
   milestoneToggle,
   setMilestoneCmd,
+  milestoneSetExactStart,
+  thresholdSetExactStart,
   cooldownAdjust,
   cooldownResetBtn,
   setCooldownCmd,
@@ -1577,9 +1735,12 @@ module.exports = {
   chartCmd,
   postChartCmd,
   addCoinCmd,
+  addCoinStart,
   addCoinConfirmExecute,
   addCoinCancel,
   historyCmd,
+  historyMenuScreen,
+  historyCoinScreen,
   channelsScreen,
   channelsListCmd,
   channelAddStart,
@@ -1589,6 +1750,10 @@ module.exports = {
   setDefaultChannelCmd,
   clearDefaultChannelTypeCmd,
   channelSetDefault,
+  channelTypeDefaultScreen,
+  channelTypeDefaultChannelScreen,
+  channelSetTypeDefaultExecute,
+  channelClearTypeDefault,
   broadcastMenuScreen,
   broadcastPick,
   captionTypesScreen,
@@ -1596,11 +1761,19 @@ module.exports = {
   captionEditStart,
   captionReset,
   captionPreview,
+  captionOverridesScreen,
+  captionCoinDetailScreen,
+  captionCoinEditStart,
+  captionCoinPreviewBtn,
+  captionCoinResetBtn,
   setCaptionCmd,
   previewCaptionCmd,
   resetCaptionCmd,
   variablesCmd,
   variablesScreen,
+  varsManageScreen,
+  varAddStart,
+  varDelBtn,
   setVarCmd,
   delVarCmd,
   automationHubScreen,
@@ -1619,12 +1792,17 @@ module.exports = {
   broadcastCmd,
   exportConfigCmd,
   importConfigCmd,
+  backupMenuScreen,
+  exportConfigButton,
+  importConfigButton,
   resetCmd,
   resetMenuScreen,
   resetConfirmScreen,
   resetExecute,
   whoami,
+  whoamiButton,
   digestNowCmd,
+  digestNowButton,
   testAlert,
   sendTestAlert,
   testTypeScreen,

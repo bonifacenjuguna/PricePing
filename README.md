@@ -2,7 +2,39 @@
 
 Telegram bot (`@PricePingAlertsBot`) that posts real-time crypto price alerts
 to Telegram channels, plus a fully button-driven private admin panel for
-managing it. Currently at **v0.4.0**.
+managing it. Currently at **v0.4.1**.
+
+## What's new in v0.4.1
+
+Every command that only had a slash-command path now has a full button
+flow too — nothing in `/commands` is a shortcut-only feature anymore:
+
+- **`/addcoin`** — "➕ Add coin" on the Coin settings screen
+- **`/milestones`** overview — "🎯 All milestones" on the Coin settings screen
+- **`/history SYMBOL [channel]`** — "📜 History" on the hub and on every
+  coin's settings screen, with tap-to-filter-by-channel buttons
+- **`/setvar` / `/delvar`** — a new "🔧 My custom variables" screen
+  (via Captions → Variables) lists them with delete buttons and an add flow
+- **`/exportconfig` / `/importconfig`** — a new "💾 Backup" screen off Settings
+- **`/whoami`** — a button on the Settings screen
+- **`/digestnow`** — a button on the Automation screen
+- **`/cleardefaultchannel`** and per-type `/setdefaultchannel name TYPE`
+  — a full picker flow off the Channels screen (pick alert type → pick
+  channel), plus clear buttons for any existing per-type override
+- **`/setcaption TYPE:SYMBOL`** per-coin overrides — "🎯 Per-coin overrides"
+  on any caption's detail screen, with its own coin picker and edit/
+  preview/reset per coin
+- **Exact-value entry** for thresholds and milestones — "✏ Exact" next to
+  the ± buttons on the coin settings screen, for setting a precise number
+  without incrementing one step at a time
+- **Muted-coins visibility** — the Mute screen now shows a summary line of
+  who's currently muted and for how long, with a 🔇 marker on their button
+
+Verified this time by generating every `callback_data` value that every
+screen actually emits (184 across the full app) and running a
+representative sample through the real callback router with every
+`commands.*` function spied, confirming each one reaches a handler — not
+just that the code parses.
 
 ## Coins tracked
 
