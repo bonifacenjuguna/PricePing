@@ -63,6 +63,8 @@ async function onCallback(ctx) {
           return commands.varsManageScreen(ctx);
         case 'backup':
           return commands.backupMenuScreen(ctx);
+        case 'pins':
+          return commands.pinManageScreen(ctx);
         case 'whoami':
           return commands.whoami(ctx);
         case 'reset':
@@ -93,6 +95,11 @@ async function onCallback(ctx) {
         return commands.sendTestAlert(ctx, a2);
       }
       return undefined;
+    }
+
+    // ---- undo:ID (generic undo — see services/undoStack.js) ----
+    if (ns === 'undo') {
+      return commands.undoExecute(ctx, a1);
     }
 
     // ---- threshold:inc|dec:SYMBOL (edit screen folded into coin:settings) ----
@@ -226,14 +233,14 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- history:coin:SYMBOL | history:filter:SYMBOL:CHANNEL ----
+    // ---- history:coin:SYMBOL[:OFFSET] | history:filter:SYMBOL:CHANNEL:OFFSET ----
     if (ns === 'history') {
       await ctx.answerCbQuery();
       if (a1 === 'coin') {
-        return commands.historyCoinScreen(ctx, a2, null);
+        return commands.historyCoinScreen(ctx, a2, null, a3 ? Number(a3) : 0);
       }
       if (a1 === 'filter') {
-        return commands.historyCoinScreen(ctx, a2, a3);
+        return commands.historyCoinScreen(ctx, a2, a3 === '-' ? null : a3, a4 ? Number(a4) : 0);
       }
       return undefined;
     }
@@ -245,6 +252,14 @@ async function onCallback(ctx) {
       }
       if (a1 === 'del') {
         return commands.varDelBtn(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- pin:toggle:KEY ----
+    if (ns === 'pin') {
+      if (a1 === 'toggle') {
+        return commands.pinToggle(ctx, a2);
       }
       return undefined;
     }

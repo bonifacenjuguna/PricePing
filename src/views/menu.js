@@ -5,6 +5,20 @@ const { formatRemaining } = require('../utils/duration');
 const HOME_ROW = [{ text: '\uD83C\uDFE0 Home', callback_data: 'nav:home' }]; // 🏠
 const HUB_ROW = [{ text: '\u2630 All commands', callback_data: 'nav:hub' }]; // ☰
 
+// Fixed catalog for the pinnable "⭐ Quick actions" row on Home — kept to a
+// short, safe set of navigation-only shortcuts (no destructive actions)
+// so pinning is low-risk regardless of what's picked.
+const PINNABLE_ACTIONS = [
+  { key: 'prices', label: '\uD83D\uDCB0 Prices', cb: 'nav:prices' },
+  { key: 'postmenu', label: '\uD83D\uDCB8 Post', cb: 'nav:postmenu' },
+  { key: 'chartmenu', label: '\uD83D\uDCC8 Chart', cb: 'nav:chartmenu' },
+  { key: 'test', label: '\uD83E\uDDEA Test', cb: 'nav:test' },
+  { key: 'pausemenu', label: '\u23F8 Pause/Resume', cb: 'nav:pausemenu' },
+  { key: 'stats', label: '\uD83D\uDCCA Stats', cb: 'nav:stats' },
+  { key: 'history', label: '\uD83D\uDCDC History', cb: 'nav:history' },
+  { key: 'channels', label: '\uD83D\uDCE1 Channels', cb: 'nav:channels' },
+];
+
 function chunk(arr, size) {
   const rows = [];
   for (let i = 0; i < arr.length; i += size) rows.push(arr.slice(i, i + size));
@@ -63,7 +77,7 @@ function durationPicker(prefix, extraRows = []) {
 }
 
 // ---------- Home ----------
-function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat }) {
+function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat, pinnedKeys = [] }) {
   const uptimeStr = formatUptime(uptimeSeconds);
 
   let statusLine = '\uD83D\uDFE2 Running';
@@ -94,7 +108,12 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
         `Last event: ${lastEvent.type} \u2014 ${format.timeAgo(lastEvent.created_at)}`
       : '');
 
+  const pinnedRow = pinnedKeys.length
+    ? [PINNABLE_ACTIONS.filter((a) => pinnedKeys.includes(a.key)).map((a) => ({ text: a.label, callback_data: a.cb }))]
+    : [];
+
   const keyboard = [
+    ...pinnedRow,
     [
       paused
         ? { text: '\u25B6 Resume', callback_data: 'action:resume' }
@@ -243,20 +262,35 @@ function thresholdEdit(symbol, threshold) {
 }
 
 // ---------- Unified coin settings screen ----------
-function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil }) {
+function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, hasCoinPostButton = true }) {
   const tStr = threshold ? (threshold.type === 'pct' ? `${threshold.value}%` : `$${format.formatChangeUsd(threshold.value)}`) : '\u2014';
   const mStr = milestone.isDisabled ? 'off' : milestone.step ? `$${format.formatChangeUsd(milestone.step)}${milestone.isCustom ? ' (custom)' : ' (default)'}` : '\u2014';
   const cStr = `${cooldownMinutes}m${isDefaultCooldown ? ' (default)' : ' (custom)'}`;
-  const muteStr = mutedUntil && new Date(mutedUntil).getTime() > Date.now() ? `muted, resumes in ${formatRemaining(new Date(mutedUntil).getTime() - Date.now())}` : 'not muted';
+  const isMuted = mutedUntil && new Date(mutedUntil).getTime() > Date.now();
+  const muteStr = isMuted ? `muted, resumes in ${formatRemaining(new Date(mutedUntil).getTime() - Date.now())}` : 'not muted';
+
+  // "Why is this coin quiet?" — mute, global pause, and a missing/disabled
+  // threshold or milestone all silence a coin identically from the
+  // outside, so spell out which one(s) actually apply right now.
+  const reasons = [];
+  if (globallyPaused) reasons.push('the bot is globally paused');
+  if (isMuted) reasons.push(`${symbol} is muted`);
+  if (!threshold) reasons.push('no threshold is set (no threshold alerts will fire)');
+  if (milestone.isDisabled) reasons.push('milestones are off for this coin');
+  const statusLine = reasons.length ? `\n\u26A0\uFE0F Currently quiet because: ${reasons.join('; ')}.` : '';
 
   const text =
     `${symbol} settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `Threshold   ${tStr}\n` +
     `Milestone   ${mStr}\n` +
     `Cooldown    ${cStr}\n` +
-    `Mute        ${muteStr}`;
+    `Mute        ${muteStr}\n` +
+    `Last alert  ${lastAlertText || 'never'}` +
+    statusLine +
+    `\n\nThreshold and milestone alerts are independent \u2014 a coin can fire both for the same move (one because it moved $X, the other because it crossed a round number).`;
 
   const keyboard = [
+    [{ text: '\uD83D\uDCB0 Post now', callback_data: `post:coin:${symbol}` }],
     [{ text: '\uD83C\uDFDA Threshold \u2212', callback_data: `threshold:dec:${symbol}` }, { text: '+', callback_data: `threshold:inc:${symbol}` }, { text: '\u270F Exact', callback_data: `threshold:setexact:${symbol}` }],
     [{ text: '\uD83C\uDFAF Milestone \u2212', callback_data: `milestone:dec:${symbol}` }, { text: '+', callback_data: `milestone:inc:${symbol}` }, { text: '\u270F Exact', callback_data: `milestone:setexact:${symbol}` }],
     [{ text: milestone.isDisabled ? '\uD83C\uDFAF Enable milestones' : '\uD83C\uDFAF Disable milestones', callback_data: `milestone:toggle:${symbol}` }],
@@ -447,7 +481,7 @@ function captionDetail(alertType, currentTemplate, isCustom) {
     [{ text: '\u270F Edit', callback_data: `caption:edit:${alertType}` }],
     [{ text: '\uD83D\uDC41 Preview', callback_data: `caption:preview:${alertType}` }],
     isCustom ? [{ text: '\u21A9 Reset to default', callback_data: `caption:reset:${alertType}` }] : [],
-    [{ text: '\uD83C\uDFAF Per-coin overrides', callback_data: `caption:overrides:${alertType}` }],
+    [{ text: '\uD83E\uDE99 Per-coin overrides', callback_data: `caption:overrides:${alertType}` }],
     [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }],
     ...footer('nav:captiontypes'),
   ].filter((row) => row.length);
@@ -502,17 +536,26 @@ function historyMenu(recentSymbols = []) {
   return { text, keyboard: coinGrid('history:coin', { recentSymbols }) };
 }
 
-function historyDetail(symbol, lines, channels, activeChannel) {
+function historyDetail(symbol, lines, channels, activeChannel, offset = 0, total = 0, pageSize = 10) {
+  const rangeLabel = total > pageSize ? ` (${offset + 1}-${Math.min(offset + pageSize, total)} of ${total})` : '';
   const text =
-    `Recent ${symbol} activity${activeChannel ? ` (#${activeChannel})` : ''}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `Recent ${symbol} activity${activeChannel ? ` (#${activeChannel})` : ''}${rangeLabel}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     (lines.length ? lines.join('\n') : 'No alerts logged yet.');
 
   const filterButtons = channels
     .filter((c) => c.name !== activeChannel)
-    .map((c) => ({ text: `#${c.name}`, callback_data: `history:filter:${symbol}:${c.name}` }));
-  const allRow = activeChannel ? [[{ text: '\uD83D\uDD04 All channels', callback_data: `history:coin:${symbol}` }]] : [];
+    .map((c) => ({ text: `#${c.name}`, callback_data: `history:filter:${symbol}:${c.name}:0` }));
+  const allRow = activeChannel ? [[{ text: '\uD83D\uDD04 All channels', callback_data: `history:coin:${symbol}:0` }]] : [];
 
-  return { text, keyboard: [...allRow, ...chunk(filterButtons, 2), ...footer('nav:history')] };
+  const pageRow = [];
+  if (offset > 0) {
+    pageRow.push({ text: '\u25C0 Newer', callback_data: `history:filter:${symbol}:${activeChannel || '-'}:${Math.max(offset - pageSize, 0)}` });
+  }
+  if (offset + pageSize < total) {
+    pageRow.push({ text: 'Older \u25B6', callback_data: `history:filter:${symbol}:${activeChannel || '-'}:${offset + pageSize}` });
+  }
+
+  return { text, keyboard: [...allRow, ...chunk(filterButtons, 2), ...(pageRow.length ? [pageRow] : []), ...footer('nav:history')] };
 }
 
 // ---------- Custom variables management ----------
@@ -523,6 +566,19 @@ function varsList(varsMap) {
   }`;
   const delButtons = entries.map(([name]) => ({ text: `\u2716 {${name}}`, callback_data: `var:del:${name}` }));
   return { text, keyboard: [...chunk(delButtons, 2), [{ text: '\u2795 Add variable', callback_data: 'var:add' }], ...footer('nav:variables')] };
+}
+
+// ---------- Quick actions (pins) ----------
+function pinManage(pinnedKeys) {
+  const text =
+    `Quick actions\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `Pick up to 3 to pin as a row on Home.\n` +
+    `Pinned: ${pinnedKeys.length ? pinnedKeys.join(', ') : 'none'}`;
+  const buttons = PINNABLE_ACTIONS.map((a) => ({
+    text: `${pinnedKeys.includes(a.key) ? '\u2705' : '\u2B1C'} ${a.label}`,
+    callback_data: `pin:toggle:${a.key}`,
+  }));
+  return { text, keyboard: [...chunk(buttons, 2), ...footer('nav:settings')] };
 }
 
 // ---------- Backup ----------
@@ -576,8 +632,8 @@ function resetConfirm(type) {
 }
 
 // ---------- Add-coin confirm ----------
-function addCoinConfirm({ symbol, name, pair, color }) {
-  const text = `Add this coin?\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSymbol  ${symbol}\nName    ${name}\nPair    ${pair}\nColor   ${color}`;
+function addCoinConfirm({ symbol, name, pair, color }, warning = '') {
+  const text = `Add this coin?\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSymbol  ${symbol}\nName    ${name}\nPair    ${pair}\nColor   ${color}${warning}`;
   const keyboard = [
     [
       { text: '\u2705 Confirm', callback_data: 'addcoin:confirm' },
@@ -620,9 +676,10 @@ function settings() {
     `Channels, captions, thresholds, milestones, cooldowns, schedules (including digests), and rules are all live \u2014 see /commands.`;
   const keyboard = [
     [
+      { text: '\u2B50 Quick actions', callback_data: 'nav:pins' },
       { text: '\uD83D\uDCBE Backup', callback_data: 'nav:backup' },
-      { text: '\uD83D\uDC64 Who am I', callback_data: 'nav:whoami' },
     ],
+    [{ text: '\uD83D\uDC64 Who am I', callback_data: 'nav:whoami' }],
     HUB_ROW,
     HOME_ROW,
   ];
@@ -696,6 +753,7 @@ module.exports = {
   varsList,
   historyMenu,
   historyDetail,
+  pinManage,
   backupMenu,
   resetMenu,
   resetConfirm,

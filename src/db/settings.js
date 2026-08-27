@@ -65,6 +65,23 @@ async function setLastDigestDate(dateStr) {
   return set('last_digest_date', dateStr);
 }
 
+// Up to 3 shortcut keys shown as an extra row on Home — see
+// views/menu.js's PINNABLE_ACTIONS catalog for the fixed set of choices.
+async function getPinnedActions() {
+  const raw = await get('pinned_actions');
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setPinnedActions(keys) {
+  return set('pinned_actions', JSON.stringify(keys.slice(0, 3)));
+}
+
 module.exports = {
   get,
   set,
@@ -79,4 +96,6 @@ module.exports = {
   setSecondaryChannelId,
   getLastDigestDate,
   setLastDigestDate,
+  getPinnedActions,
+  setPinnedActions,
 };

@@ -27,12 +27,12 @@ const templateEngine = require('../services/templateEngine');
 const actions = require('../services/actions');
 const pendingInput = require('../services/pendingInput');
 const recentCoins = require('../services/recentCoins');
+const undoStack = require('../services/undoStack');
 
 const format = require('../utils/format');
 const { parseDuration, formatRemaining } = require('../utils/duration');
 const logger = require('../utils/logger');
 
-const lastThresholdChange = new Map(); // symbol -> { value, type } — powers the Undo button
 let pendingAddCoin = null; // single-admin bot — one addcoin confirmation in flight at a time
 
 function inlineReply(ctx, screen) {
@@ -85,16 +85,17 @@ async function help(ctx) {
 }
 
 async function home(ctx) {
-  const [paused, pausedUntil, alertsToday, [lastEvent], heartbeat] = await Promise.all([
+  const [paused, pausedUntil, alertsToday, [lastEvent], heartbeat, pinnedKeys] = await Promise.all([
     settingsDb.isPaused(),
     settingsDb.getPausedUntil(),
     alertsLogDb.countToday(),
     eventsDb.latest(1),
     heartbeatDb.get(),
+    settingsDb.getPinnedActions(),
   ]);
   await inlineReply(
     ctx,
-    menu.home({ paused, pausedUntil, uptimeSeconds: process.uptime(), alertsToday, lastEvent: lastEvent || null, heartbeat })
+    menu.home({ paused, pausedUntil, uptimeSeconds: process.uptime(), alertsToday, lastEvent: lastEvent || null, heartbeat, pinnedKeys })
   );
 }
 
@@ -125,6 +126,24 @@ async function statsCmd(ctx) {
 
 async function settingsCmd(ctx) {
   await inlineReply(ctx, menu.settings());
+}
+async function pinManageScreen(ctx) {
+  await inlineEdit(ctx, menu.pinManage(await settingsDb.getPinnedActions()));
+}
+async function pinToggle(ctx, key) {
+  const current = await settingsDb.getPinnedActions();
+  let next;
+  if (current.includes(key)) {
+    next = current.filter((k) => k !== key);
+  } else if (current.length >= 3) {
+    await ctx.answerCbQuery('Already have 3 pinned — unpin one first.');
+    return;
+  } else {
+    next = [...current, key];
+  }
+  await settingsDb.setPinnedActions(next);
+  await ctx.answerCbQuery();
+  await pinManageScreen(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -181,13 +200,19 @@ async function setThreshold(ctx) {
     return;
   }
   const previous = await thresholdsDb.get(symbol);
-  if (previous) lastThresholdChange.set(symbol, previous);
   await thresholdsDb.set(symbol, amount, type);
+  const undoId = undoStack.push(`${symbol} threshold`, async () => {
+    if (previous) await thresholdsDb.set(symbol, previous.value, previous.type);
+  });
 
   const displayAmount = type === 'pct' ? `${amount}%` : `$${amount}`;
-  const keyboard = previous ? [[{ text: '\u21A9 Undo', callback_data: `action:undothreshold:${symbol}` }]] : [];
-  await ctx.reply(`Threshold for ${symbol} set to ${displayAmount}${type === 'pct' ? ' (of price)' : ''}.`, {
-    reply_markup: keyboard.length ? { inline_keyboard: keyboard } : undefined,
+  let warning = '';
+  const referenceDefault = config.defaultThresholds[symbol];
+  if (referenceDefault && type === 'usd' && amount > referenceDefault * 50) {
+    warning = `\n\u26A0\uFE0F That's ${Math.round(amount / referenceDefault)}\u00D7 the typical default for ${symbol} (\$${referenceDefault}) \u2014 double check this was intentional.`;
+  }
+  await ctx.reply(`Threshold for ${symbol} set to ${displayAmount}${type === 'pct' ? ' (of price)' : ''}.${warning}`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
   });
 }
 
@@ -199,15 +224,22 @@ async function thresholdSetExactStart(ctx, symbol) {
 }
 
 async function undoThreshold(ctx, symbol) {
-  const previous = lastThresholdChange.get(symbol);
-  if (!previous) {
-    await ctx.reply(`Nothing to undo for ${symbol}.`);
+  await ctx.reply(`Use the "\u21A9 Undo" button that came with the confirmation message instead \u2014 undo is now generic and time-limited, not stored per-symbol.`);
+}
+
+async function undoExecute(ctx, id) {
+  const entry = undoStack.consume(id);
+  if (!entry) {
+    await ctx.answerCbQuery('Nothing to undo (may have expired or already been used).');
     return;
   }
-  await thresholdsDb.set(symbol, previous.value, previous.type);
-  lastThresholdChange.delete(symbol);
-  const displayAmount = previous.type === 'pct' ? `${previous.value}%` : `$${previous.value}`;
-  await ctx.reply(`Reverted ${symbol} threshold to ${displayAmount}.`);
+  await ctx.answerCbQuery('Undoing...');
+  try {
+    await entry.undoFn();
+    await ctx.reply(`Undone: ${entry.label}.`);
+  } catch (err) {
+    await ctx.reply(`Could not undo "${entry.label}": ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,17 +255,25 @@ async function coinSettingsScreen(ctx, symbol) {
     await ctx.answerCbQuery('Unknown coin');
     return;
   }
-  const [threshold, milestoneMap, cooldownOverrides, states] = await Promise.all([
+  const [threshold, milestoneMap, cooldownOverrides, states, globallyPaused, lastAlerts] = await Promise.all([
     thresholdsDb.get(symbol),
     milestonesDb.getAll(),
     cooldownsDb.getAll(),
     coinStateDb.getAll(),
+    settingsDb.isPaused(),
+    alertsLogDb.recentForSymbol(symbol, 1),
   ]);
   const milestone = milestoneMap.get(symbol) || { step: coin.milestoneStep, isCustom: false, isDisabled: false };
   const isDefaultCooldown = cooldownOverrides[symbol] === undefined;
   const cooldownMinutes = cooldownOverrides[symbol] ?? config.cooldownMinutes;
   const mutedUntil = (states[symbol] || {}).pausedUntil;
-  await inlineEdit(ctx, menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil }));
+  const lastAlertText = lastAlerts.length
+    ? `${format.timeAgo(lastAlerts[0].created_at)} (${lastAlerts[0].alert_type})`
+    : null;
+  await inlineEdit(
+    ctx,
+    menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText })
+  );
 }
 
 // --- Milestones ---
@@ -291,9 +331,20 @@ async function setMilestoneCmd(ctx) {
     await ctx.reply('Usage: /setmilestone SYMBOL STEP\nOr: /setmilestone SYMBOL off');
     return;
   }
+  const priorMap = await milestonesDb.getAll();
+  const prior = priorMap.get(symbol) || { step: null, isCustom: false, isDisabled: false };
+  const undoFn = async () => {
+    if (prior.isDisabled) await milestonesDb.disable(symbol);
+    else if (prior.isCustom) await milestonesDb.set(symbol, prior.step);
+    else await milestonesDb.clear(symbol);
+  };
+
   if (valueArg === 'off') {
     await milestonesDb.disable(symbol);
-    await ctx.reply(`${symbol} milestones turned off.`);
+    const undoId = undoStack.push(`${symbol} milestone`, undoFn);
+    await ctx.reply(`${symbol} milestones turned off.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
     return;
   }
   const step = Number(valueArg);
@@ -302,7 +353,10 @@ async function setMilestoneCmd(ctx) {
     return;
   }
   await milestonesDb.set(symbol, step);
-  await ctx.reply(`${symbol} will now post a milestone alert every $${format.formatChangeUsd(step)} (e.g. crossing 71,500 / 72,000 / 72,500...).`);
+  const undoId = undoStack.push(`${symbol} milestone`, undoFn);
+  await ctx.reply(`${symbol} will now post a milestone alert every $${format.formatChangeUsd(step)} (e.g. crossing 71,500 / 72,000 / 72,500...).`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+  });
 }
 
 // --- Cooldown overrides ---
@@ -322,12 +376,25 @@ async function setCooldownCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
   const minutes = Number(parts[2]);
-  if (!findCoin(symbol) || !Number.isFinite(minutes) || minutes <= 0) {
+  if (!findCoin(symbol) || !Number.isFinite(minutes)) {
     await ctx.reply('Usage: /setcooldown SYMBOL MINUTES');
     return;
   }
+  if (minutes < 1) {
+    await ctx.reply('Cooldown can\'t go below 1 minute — that\'s a hard floor to stop an accidental spam loop.');
+    return;
+  }
+  const previous = await cooldownsDb.getAll();
+  const hadOverride = Object.prototype.hasOwnProperty.call(previous, symbol);
+  const previousValue = previous[symbol];
   await cooldownsDb.set(symbol, minutes);
-  await ctx.reply(`${symbol} cooldown set to ${minutes}m.`);
+  const undoId = undoStack.push(`${symbol} cooldown`, async () => {
+    if (hadOverride) await cooldownsDb.set(symbol, previousValue);
+    else await cooldownsDb.clear(symbol);
+  });
+  await ctx.reply(`${symbol} cooldown set to ${minutes}m.`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+  });
 }
 async function resetCooldownCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
@@ -541,6 +608,28 @@ async function addCoinStart(ctx) {
   await ctx.answerCbQuery();
   await ctx.reply(prompt);
 }
+// Damerau-Levenshtein (with adjacent transposition) rather than plain
+// Levenshtein — a swapped-letter typo like "XPR" vs "XRP" is distance 1
+// here but distance 2 under plain Levenshtein, and letter swaps are one
+// of the most common typo patterns, so this is the version worth using.
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + cost);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
 async function stageAddCoin(ctx, parts) {
   const symbol = (parts[0] || '').toUpperCase();
   const pair = (parts[1] || '').toUpperCase();
@@ -555,8 +644,15 @@ async function stageAddCoin(ctx, parts) {
     await ctx.reply(`${symbol} is already tracked.`);
     return;
   }
+
+  // Catches "XPR" vs "XRP" style typos before they become a permanently
+  // tracked duplicate — only fires on a near-miss (edit distance 1), never
+  // on an unrelated short symbol.
+  const lookalike = config.coins.find((c) => symbol.length >= 3 && levenshtein(symbol, c.symbol) === 1);
+  const warning = lookalike ? `\n\u26A0\uFE0F This looks similar to already-tracked ${lookalike.symbol} \u2014 double check this isn't a typo.` : '';
+
   pendingAddCoin = { symbol, name, pair, color };
-  await inlineReply(ctx, menu.addCoinConfirm({ symbol, name, pair, color }));
+  await inlineReply(ctx, menu.addCoinConfirm({ symbol, name, pair, color }, warning));
 }
 async function addCoinConfirmExecute(ctx) {
   if (!pendingAddCoin) {
@@ -584,14 +680,18 @@ async function addCoinCancel(ctx) {
 async function historyMenuScreen(ctx) {
   await inlineEdit(ctx, menu.historyMenu(recentCoins.getRecent()));
 }
-async function historyCoinScreen(ctx, symbol, channelName = null) {
+async function historyCoinScreen(ctx, symbol, channelName = null, offset = 0) {
   recentCoins.noteCoin(symbol);
-  const [rows, channels] = await Promise.all([alertsLogDb.recentForSymbol(symbol, 10, channelName), channelsDb.getAll()]);
+  const [rows, channels, total] = await Promise.all([
+    alertsLogDb.recentForSymbol(symbol, 10, channelName, offset),
+    channelsDb.getAll(),
+    alertsLogDb.countForSymbol(symbol, channelName),
+  ]);
   const lines = rows.map((r) => {
     const arrow = r.direction === 'up' ? '\u25B2' : '\u25BC';
     return `${format.timeAgo(r.created_at)}  ${arrow} $${format.formatPrice(Number(r.price))}  [${r.alert_type} \u2192 #${r.channel_name}]`;
   });
-  await inlineEdit(ctx, menu.historyDetail(symbol, lines, channels, channelName));
+  await inlineEdit(ctx, menu.historyDetail(symbol, lines, channels, channelName, offset, total));
 }
 async function historyCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
@@ -641,8 +741,24 @@ async function runAddChannel(ctx, parts) {
     await ctx.reply('Usage: name chat_id\nExample: vip -1001234567890');
     return;
   }
+  const existing = await channelsDb.get(name);
+
+  // Confirm the bot can actually see this chat before saving it — catches
+  // a typo'd chat_id immediately instead of it silently failing the first
+  // time something tries to post there.
+  try {
+    await ctx.telegram.getChat(chatId);
+  } catch (err) {
+    await ctx.reply(
+      `Could not verify chat ${chatId}: ${err.message}\n` +
+        `Make sure the bot is added as an admin there, and the chat_id is correct. Nothing was saved.`
+    );
+    return;
+  }
+
   await channelsDb.add(name, chatId);
-  await ctx.reply(`Channel "${name}" added \u2192 ${chatId}. Use /setdefaultchannel ${name} to make it the default target.`);
+  const overwriteNote = existing ? ` (previously pointed to ${existing.chatId})` : '';
+  await ctx.reply(`Channel "${name}" added \u2192 ${chatId}${overwriteNote}. Use /setdefaultchannel ${name} to make it the default target.`);
 }
 async function removeChannelCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
@@ -661,7 +777,15 @@ async function channelDel(ctx, name) {
     return;
   }
   await channelsDb.remove(name);
-  await ctx.answerCbQuery('Removed');
+  if (channel) {
+    const undoId = undoStack.push(`removed channel "${name}"`, async () => channelsDb.add(channel.name, channel.chatId));
+    await ctx.answerCbQuery('Removed');
+    await ctx.reply(`Channel "${name}" removed.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
+  } else {
+    await ctx.answerCbQuery('Removed');
+  }
   await channelsScreen(ctx);
 }
 async function setDefaultChannelCmd(ctx) {
@@ -749,8 +873,17 @@ async function captionEditStart(ctx, alertType) {
   await ctx.reply(prompt);
 }
 async function captionReset(ctx, alertType) {
+  const previous = await templatesDb.get(alertType);
   await templatesDb.reset(alertType);
-  await ctx.answerCbQuery('Reset to default');
+  if (previous) {
+    const undoId = undoStack.push(`"${alertType}" caption`, async () => templatesDb.set(alertType, previous));
+    await ctx.answerCbQuery('Reset to default');
+    await ctx.reply(`Caption for "${alertType}" reset to default.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
+  } else {
+    await ctx.answerCbQuery('Reset to default');
+  }
   await captionDetailScreen(ctx, alertType);
 }
 async function captionOverridesScreen(ctx, alertType) {
@@ -805,8 +938,26 @@ async function sendCaptionPreview(ctx, alertTypeArg) {
     ctxData = { coin, periodLabel: 'Last 24 hours', alertType: 'chart', channel: sampleChannel };
   }
   const rendered = await templateEngine.renderCaption(base, ctxData);
-  await ctx.reply('Preview (sample data):\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
-  await ctx.reply(rendered, { parse_mode: 'HTML' });
+
+  // Renders the actual card/chart image too, not just the caption text —
+  // seeing how the wording sits next to the real visual catches issues
+  // (too-long lines, a variable that reads oddly) that text-only never would.
+  try {
+    let buffer;
+    if (base === 'threshold' || base === 'milestone') {
+      buffer = await cardRenderer.renderCard(ctxData);
+    } else if (base === 'manual') {
+      buffer = await cardRenderer.renderRichCard(ctxData);
+    } else {
+      const fakeCandles = Array.from({ length: 20 }, (_, i) => ({ openTime: i, close: 108000 + Math.sin(i / 2) * 800 }));
+      buffer = await chartRenderer.renderChart({ coin, candles: fakeCandles, periodKey: '24h' });
+    }
+    await ctx.replyWithPhoto(Input.fromBuffer(buffer, 'preview.png'), { caption: rendered, parse_mode: 'HTML' });
+  } catch (err) {
+    logger.warn('Caption preview image render failed, falling back to text-only', { message: err.message });
+    await ctx.reply('Preview (sample data):\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
+    await ctx.reply(rendered, { parse_mode: 'HTML' });
+  }
 }
 
 async function setCaptionCmd(ctx) {
@@ -830,8 +981,16 @@ async function runSetCaption(ctx, alertTypeArg, template) {
     return;
   }
   const key = symbolPart ? `${base}:${symbolPart.toUpperCase()}` : base;
+  const previous = await templatesDb.get(key);
   await templatesDb.set(key, template);
-  await ctx.reply(`Caption for "${key}" updated. Use /previewcaption ${key} to see it rendered.`);
+  const undoId = undoStack.push(`"${key}" caption`, async () => {
+    if (previous) await templatesDb.set(key, previous);
+    else await templatesDb.reset(key);
+  });
+  const overwriteNote = previous ? ' (overwrote an existing custom template)' : '';
+  await ctx.reply(`Caption for "${key}" updated${overwriteNote}. Use /previewcaption ${key} to see it rendered.`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+  });
 }
 async function previewCaptionCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
@@ -990,8 +1149,29 @@ async function runAddSchedule(ctx, parts, editId = null) {
   }
 }
 async function scheduleDel(ctx, id) {
+  const all = await schedulesDb.getAll();
+  const s = all.find((x) => x.id === Number(id));
   await schedulesDb.remove(Number(id));
-  await ctx.answerCbQuery('Removed');
+  if (s) {
+    const undoId = undoStack.push(`removed schedule #${id}`, async () =>
+      schedulesDb.add({
+        kind: s.kind,
+        symbol: s.symbol,
+        period: s.period,
+        channelName: s.channelName,
+        cadence: s.cadence,
+        atMinuteUtc: s.atMinuteUtc,
+        atHourUtc: s.atHourUtc,
+        dayOfWeek: s.dayOfWeek,
+      })
+    );
+    await ctx.answerCbQuery('Removed');
+    await ctx.reply(`Schedule #${id} removed.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
+  } else {
+    await ctx.answerCbQuery('Removed');
+  }
   await schedulesScreen(ctx);
 }
 async function scheduleEditStart(ctx, id) {
@@ -1094,8 +1274,26 @@ async function runAddRule(ctx, rawText, editId = null) {
   }
 }
 async function ruleDel(ctx, id) {
+  const all = await rulesDb.getAll();
+  const r = all.find((x) => x.id === Number(id));
   await rulesDb.remove(Number(id));
-  await ctx.answerCbQuery('Removed');
+  if (r) {
+    const undoId = undoStack.push(`removed rule #${id}`, async () =>
+      rulesDb.add({
+        triggerType: r.triggerType,
+        triggerSymbol: r.triggerSymbol,
+        actionType: r.actionType,
+        actionParams: r.actionParams,
+        minMovePct: r.minMovePct,
+      })
+    );
+    await ctx.answerCbQuery('Removed');
+    await ctx.reply(`Rule #${id} removed.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
+  } else {
+    await ctx.answerCbQuery('Removed');
+  }
   await rulesScreen(ctx);
 }
 async function ruleEditStart(ctx, id) {
@@ -1637,16 +1835,36 @@ async function runSetExactThreshold(ctx, symbol, text) {
     return;
   }
   const previous = await thresholdsDb.get(symbol);
-  if (previous) lastThresholdChange.set(symbol, previous);
   await thresholdsDb.set(symbol, amount, type);
-  await ctx.reply(`${symbol} threshold set to ${type === 'pct' ? `${amount}%` : `$${amount}`}.`);
+  const undoId = undoStack.push(`${symbol} threshold`, async () => {
+    if (previous) await thresholdsDb.set(symbol, previous.value, previous.type);
+  });
+  let warning = '';
+  const referenceDefault = config.defaultThresholds[symbol];
+  if (referenceDefault && type === 'usd' && amount > referenceDefault * 50) {
+    warning = `\n\u26A0\uFE0F That's ${Math.round(amount / referenceDefault)}\u00D7 the typical default for ${symbol} \u2014 double check this was intentional.`;
+  }
+  await ctx.reply(`${symbol} threshold set to ${type === 'pct' ? `${amount}%` : `$${amount}`}.${warning}`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+  });
 }
 
 async function runSetExactMilestone(ctx, symbol, text) {
   const trimmed = text.trim().toLowerCase();
+  const priorMap = await milestonesDb.getAll();
+  const prior = priorMap.get(symbol) || { step: null, isCustom: false, isDisabled: false };
+  const undoFn = async () => {
+    if (prior.isDisabled) await milestonesDb.disable(symbol);
+    else if (prior.isCustom) await milestonesDb.set(symbol, prior.step);
+    else await milestonesDb.clear(symbol);
+  };
+
   if (trimmed === 'off') {
     await milestonesDb.disable(symbol);
-    await ctx.reply(`${symbol} milestones turned off.`);
+    const undoId = undoStack.push(`${symbol} milestone`, undoFn);
+    await ctx.reply(`${symbol} milestones turned off.`, {
+      reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+    });
     return;
   }
   const step = Number(trimmed);
@@ -1655,7 +1873,10 @@ async function runSetExactMilestone(ctx, symbol, text) {
     return;
   }
   await milestonesDb.set(symbol, step);
-  await ctx.reply(`${symbol} milestone step set to $${format.formatChangeUsd(step)}.`);
+  const undoId = undoStack.push(`${symbol} milestone`, undoFn);
+  await ctx.reply(`${symbol} milestone step set to $${format.formatChangeUsd(step)}.`, {
+    reply_markup: { inline_keyboard: [[{ text: '\u21A9 Undo', callback_data: `undo:${undoId}` }]] },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1695,10 +1916,13 @@ module.exports = {
   pricesCmd,
   statsCmd,
   settingsCmd,
+  pinManageScreen,
+  pinToggle,
   thresholdsCmd,
   thresholdAdjust,
   setThreshold,
   undoThreshold,
+  undoExecute,
   coinSettingsMenuScreen,
   coinSettingsScreen,
   milestonesScreen,

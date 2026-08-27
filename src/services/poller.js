@@ -17,6 +17,9 @@ let consecutiveFailures = 0;
 let failureAlertSent = false;
 let capNotifiedThisWindow = false;
 let noDefaultChannelWarned = false;
+const consecutiveMisses = new Map(); // symbol -> count of ticks with no price returned
+const delistWarned = new Set(); // symbols already flagged this "episode" — resets when price returns
+const DELIST_MISS_THRESHOLD = 20; // ~10 minutes at the default 30s poll interval
 
 function coinBySymbol(symbol) {
   return config.coins.find((c) => c.symbol === symbol);
@@ -127,7 +130,31 @@ async function tickInner(bot) {
 
   for (const coin of config.coins) {
     const price = prices.get(coin.symbol);
-    if (price === undefined) continue;
+    if (price === undefined) {
+      // Tracks a coin whose price has stopped coming back from Binance —
+      // e.g. delisted, pair renamed, or a typo in a runtime-added pair.
+      // Distinct from a full Binance outage (handled above): this can
+      // happen for just ONE coin while everything else reports fine.
+      const misses = (consecutiveMisses.get(coin.symbol) || 0) + 1;
+      consecutiveMisses.set(coin.symbol, misses);
+      if (misses === DELIST_MISS_THRESHOLD && !delistWarned.has(coin.symbol)) {
+        delistWarned.add(coin.symbol);
+        events.record('symbol_no_price', `${coin.symbol} (${coin.binancePair || coin.impliedFromInverse}) has returned no price for ${misses} consecutive ticks`).catch(() => {});
+        bot.telegram
+          .sendMessage(
+            config.adminId,
+            `\u26A0\uFE0F ${coin.symbol} hasn't returned a price from Binance in a while (~${Math.round(
+              (misses * config.pollIntervalMs) / 60000
+            )} minutes). It may have been delisted, renamed, or there's a typo in its pair. Worth checking with /prices.`
+          )
+          .catch(() => {});
+      }
+      continue;
+    }
+    if (consecutiveMisses.has(coin.symbol)) {
+      consecutiveMisses.delete(coin.symbol);
+      delistWarned.delete(coin.symbol);
+    }
 
     await coinStateDb.updateLastPrice(coin.symbol, price);
 

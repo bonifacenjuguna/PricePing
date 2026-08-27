@@ -51,21 +51,33 @@ async function recent(limit = 10) {
   return rows;
 }
 
-async function recentForSymbol(symbol, limit = 10, channelName = null) {
+async function recentForSymbol(symbol, limit = 10, channelName = null, offset = 0) {
   if (channelName) {
     const { rows } = await pool.query(
       `SELECT symbol, price, change_usd, direction, alert_type, channel_name, created_at
-       FROM alerts_log WHERE symbol = $1 AND channel_name = $2 ORDER BY created_at DESC LIMIT $3`,
-      [symbol, channelName, limit]
+       FROM alerts_log WHERE symbol = $1 AND channel_name = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+      [symbol, channelName, limit, offset]
     );
     return rows;
   }
   const { rows } = await pool.query(
     `SELECT symbol, price, change_usd, direction, alert_type, channel_name, created_at
-     FROM alerts_log WHERE symbol = $1 ORDER BY created_at DESC LIMIT $2`,
-    [symbol, limit]
+     FROM alerts_log WHERE symbol = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [symbol, limit, offset]
   );
   return rows;
+}
+
+async function countForSymbol(symbol, channelName = null) {
+  if (channelName) {
+    const { rows } = await pool.query(
+      'SELECT count(*)::int AS count FROM alerts_log WHERE symbol = $1 AND channel_name = $2',
+      [symbol, channelName]
+    );
+    return rows[0].count;
+  }
+  const { rows } = await pool.query('SELECT count(*)::int AS count FROM alerts_log WHERE symbol = $1', [symbol]);
+  return rows[0].count;
 }
 
 async function countTodayForSymbol(symbol) {
@@ -84,6 +96,7 @@ module.exports = {
   countLastHour,
   countTodayForSymbol,
   countPerCoin,
+  countForSymbol,
   recent,
   recentForSymbol,
 };

@@ -2,7 +2,37 @@
 
 Telegram bot (`@PricePingAlertsBot`) that posts real-time crypto price alerts
 to Telegram channels, plus a fully button-driven private admin panel for
-managing it. Currently at **v0.4.1**.
+managing it. Currently at **v0.5.0**. Full version history and the
+complete feature backlog live in [`CHANGELOG.md`](./CHANGELOG.md).
+
+## What's new in v0.5.0
+
+- **Generic undo** — an "↩ Undo" button now follows `/setthreshold`,
+  `/setmilestone`, `/setcooldown`, channel removal, caption set/reset, and
+  schedule/rule removal. Replaces the old threshold-only undo from v0.2.0.
+  Time-boxed to 15 minutes, keeps the last 8 actions.
+- **Safety rails**: a hard 1-minute cooldown floor, a soft warning when a
+  threshold edit looks unusually large (50×+ the typical default), and a
+  typo guard on `/addcoin` that catches near-miss symbols — including
+  letter-swap typos like XPR↔XRP, not just missing/extra letters.
+- **Channel validation** — `/addchannel` now confirms the bot can actually
+  see the chat before saving; a bad ID is rejected immediately instead of
+  failing silently on the first real post.
+- **Delisted/renamed-symbol detection** — the poller flags a coin that's
+  stopped returning a price for ~10 minutes, distinct from a full Binance
+  outage.
+- **Caption preview shows the real card** — `/previewcaption` now renders
+  and sends the actual image alongside the caption text, for all four
+  alert types, not just the wording.
+- **`/history` pagination** — Newer/Older buttons once a coin has more
+  than 10 logged alerts.
+- **Coin settings clarity** — a "why is this coin quiet?" line
+  (distinguishing pause / mute / no threshold / milestones-off, which
+  previously all looked identical), a last-alert timestamp, and a
+  "💰 Post now" shortcut right on the settings screen.
+- **"⭐ Quick actions"** — pin up to 3 shortcuts to an extra row on Home.
+- **`/feed.json`** — a public read-only JSON feed of recent alerts, for
+  syndicating PricePing data outside Telegram.
 
 ## What's new in v0.4.1
 
@@ -195,6 +225,17 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Reset | `/reset [thresholds\|milestones\|cooldowns\|captions\|vars\|channels\|automation\|everything]` |
 | Stats | `/stats` `/digestnow` |
 | Testing | `/test [SYMBOL]` `/test fail binance` `/test fail telegram` |
+
+## Testing without internet (v0.5.0 additions)
+
+On top of the checks described below: the undo stack's push/consume/
+time-box/8-entry-cap behavior was tested directly; the Damerau-Levenshtein
+typo guard was verified against the exact XPR↔XRP transposition example
+used to justify building it (a plain Levenshtein implementation would have
+missed this — caught and fixed during testing); channel validation was
+tested against both a valid and a rejected `getChat` response, confirming
+nothing is saved on failure; and caption preview was confirmed to send an
+actual rendered image (not just text) for all four alert types.
 
 ## Testing without internet
 

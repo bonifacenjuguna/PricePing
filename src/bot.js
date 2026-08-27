@@ -12,6 +12,7 @@ const text = require('./handlers/text');
 const settingsDb = require('./db/settings');
 const eventsDb = require('./db/events');
 const channelsDb = require('./db/channels');
+const alertsLogDb = require('./db/alertsLog');
 
 const scheduler = require('./services/scheduler');
 const memoryWatchdog = require('./services/memoryWatchdog');
@@ -197,6 +198,31 @@ const app = express();
 app.use(express.json({ limit: '256kb' }));
 
 app.get('/health', (req, res) => res.status(200).send('ok'));
+
+// Read-only JSON feed of recent alerts — lets the admin (or anyone with
+// the URL) syndicate PricePing data elsewhere without needing bot access
+// at all. No auth: this only ever exposes what's already public in the
+// channel(s), never admin settings or channel chat_ids.
+app.get('/feed.json', async (req, res) => {
+  try {
+    const recent = await alertsLogDb.recent(20);
+    res.json({
+      bot: config.botName,
+      generatedAt: new Date().toISOString(),
+      alerts: recent.map((r) => ({
+        symbol: r.symbol,
+        price: Number(r.price),
+        changeUsd: Number(r.change_usd),
+        direction: r.direction,
+        alertType: r.alert_type,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    logger.error('Failed to build /feed.json', { message: err.message });
+    res.status(500).json({ error: 'internal error' });
+  }
+});
 
 async function start() {
   await eventsDb.record('boot', 'Process starting');
