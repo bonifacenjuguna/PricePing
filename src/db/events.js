@@ -18,4 +18,19 @@ async function latest(limit = 5) {
   return rows;
 }
 
-module.exports = { record, latest };
+// Config-change audit trail — a thin wrapper over record() with a fixed
+// type so /auditlog can filter to just admin actions, not system events
+// like boot/binance_outage/heartbeat_stale.
+async function recordAudit(action) {
+  return record('audit', action);
+}
+
+async function latestAudit(limit = 15) {
+  const { rows } = await pool.query(
+    `SELECT message, created_at FROM events WHERE type = 'audit' ORDER BY created_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+module.exports = { record, latest, recordAudit, latestAudit };

@@ -19,7 +19,7 @@ const DEFAULT_TEMPLATES = {
 // actually populated, since e.g. {milestone_level} is only ever non-empty
 // on a milestone alert.
 const VARIABLE_DOCS = [
-  { group: 'Always available', vars: ['symbol', 'name', 'price', 'time', 'date', 'coin_rank', 'channel_name', 'channel_handle', 'bot_name'] },
+  { group: 'Always available', vars: ['symbol', 'name', 'coin_emoji', 'price', 'time', 'date', 'coin_rank', 'channel_name', 'channel_handle', 'bot_name'] },
   { group: 'Threshold alerts', vars: ['direction_arrow', 'change_pct', 'change_usd', 'threshold_value', 'threshold_type', 'cooldown_remaining'] },
   { group: 'Milestone alerts', vars: ['direction_arrow', 'milestone_level', 'next_milestone'] },
   { group: 'Manual posts', vars: ['direction_arrow', 'change_pct', 'high_24h', 'low_24h', 'open_24h', 'volume_24h', 'change_since_last_post'] },
@@ -81,6 +81,7 @@ function buildVariables(ctx) {
   const vars = {
     symbol: coin.symbol,
     name: coin.name,
+    coin_emoji: coin.emoji || null,
     price: format.formatPrice(ctx.price),
     time: now.toISOString().slice(11, 16) + ' UTC',
     date: now.toISOString().slice(0, 10),

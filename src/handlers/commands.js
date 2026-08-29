@@ -85,17 +85,27 @@ async function help(ctx) {
 }
 
 async function home(ctx) {
-  const [paused, pausedUntil, alertsToday, [lastEvent], heartbeat, pinnedKeys] = await Promise.all([
+  const [paused, pausedUntil, alertsToday, [lastEvent], heartbeat, pinnedKeys, killSnapshot] = await Promise.all([
     settingsDb.isPaused(),
     settingsDb.getPausedUntil(),
     alertsLogDb.countToday(),
     eventsDb.latest(1),
     heartbeatDb.get(),
     settingsDb.getPinnedActions(),
+    settingsDb.getKillSnapshot(),
   ]);
   await inlineReply(
     ctx,
-    menu.home({ paused, pausedUntil, uptimeSeconds: process.uptime(), alertsToday, lastEvent: lastEvent || null, heartbeat, pinnedKeys })
+    menu.home({
+      paused,
+      pausedUntil,
+      uptimeSeconds: process.uptime(),
+      alertsToday,
+      lastEvent: lastEvent || null,
+      heartbeat,
+      pinnedKeys,
+      killSwitchActive: !!killSnapshot,
+    })
   );
 }
 
@@ -125,7 +135,26 @@ async function statsCmd(ctx) {
 }
 
 async function settingsCmd(ctx) {
-  await inlineReply(ctx, menu.settings());
+  const [compactCards, quietHours] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours()]);
+  await inlineReply(ctx, menu.settings({ compactCards, quietHours }));
+}
+async function usageCmd(ctx) {
+  const commandUsageDb = require('../db/commandUsage');
+  const rows = await commandUsageDb.getAll();
+  await inlineReply(ctx, menu.usageList(rows));
+}
+async function usageScreen(ctx) {
+  const commandUsageDb = require('../db/commandUsage');
+  const rows = await commandUsageDb.getAll();
+  await inlineEdit(ctx, menu.usageList(rows));
+}
+async function auditLogCmd(ctx) {
+  const rows = await eventsDb.latestAudit(15);
+  await inlineReply(ctx, menu.auditLog(rows));
+}
+async function auditLogScreen(ctx) {
+  const rows = await eventsDb.latestAudit(15);
+  await inlineEdit(ctx, menu.auditLog(rows));
 }
 async function pinManageScreen(ctx) {
   await inlineEdit(ctx, menu.pinManage(await settingsDb.getPinnedActions()));
@@ -144,6 +173,48 @@ async function pinToggle(ctx, key) {
   await settingsDb.setPinnedActions(next);
   await ctx.answerCbQuery();
   await pinManageScreen(ctx);
+}
+
+// Kill switch — one tap to stop everything (global pause + snapshot of
+// every coin's current mute state), one tap to put it all back exactly
+// as it was. Deliberately doesn't touch thresholds/channels/automation —
+// just the "is anything allowed to post right now" state, for a chaotic-
+// market moment where you want to stop without having to think it through.
+async function killSwitchToggle(ctx) {
+  const existing = await settingsDb.getKillSnapshot();
+  if (existing) {
+    // Restore
+    await settingsDb.setPaused(existing.paused);
+    if (existing.pausedUntil) await settingsDb.setPausedUntil(new Date(existing.pausedUntil));
+    else if (!existing.paused) await settingsDb.setPaused(false);
+    const states = await coinStateDb.getAll();
+    for (const [symbol, wasMutedUntil] of Object.entries(existing.mutedCoins || {})) {
+      if (wasMutedUntil) await coinStateDb.setMuteUntil(symbol, new Date(wasMutedUntil));
+    }
+    for (const symbol of Object.keys(states)) {
+      if (!(symbol in (existing.mutedCoins || {})) && states[symbol].pausedUntil) {
+        await coinStateDb.clearMute(symbol); // was muted only because of the kill switch — lift it
+      }
+    }
+    await settingsDb.clearKillSnapshot();
+    await ctx.answerCbQuery('Restored');
+    eventsDb.recordAudit('kill switch: restored').catch(() => {});
+    await ctx.reply('Kill switch released — restored to how things were before.');
+  } else {
+    const paused = await settingsDb.isPaused();
+    const pausedUntil = await settingsDb.getPausedUntil();
+    const states = await coinStateDb.getAll();
+    const mutedCoins = {};
+    for (const [symbol, state] of Object.entries(states)) {
+      if (state.pausedUntil && new Date(state.pausedUntil).getTime() > Date.now()) mutedCoins[symbol] = state.pausedUntil;
+    }
+    await settingsDb.setKillSnapshot({ paused, pausedUntil, mutedCoins });
+    await settingsDb.setPaused(true);
+    await ctx.answerCbQuery('Killed');
+    eventsDb.recordAudit('kill switch: activated').catch(() => {});
+    await ctx.reply('\uD83D\uDED1 Everything stopped. Tap the kill switch again on Home to restore exactly this state.');
+  }
+  await home(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,8 +240,7 @@ async function thresholdsCmd(ctx) {
 function thresholdStep(threshold) {
   if (!threshold) return 1;
   if (threshold.type === 'pct') return 0.5;
-  const raw = threshold.value * 0.1;
-  return Math.max(Math.round(raw * 100) / 100, 0.01);
+  return format.niceStep(threshold.value, 0.0001);
 }
 
 async function thresholdAdjust(ctx, symbol, dir) {
@@ -180,8 +250,8 @@ async function thresholdAdjust(ctx, symbol, dir) {
     return;
   }
   const step = thresholdStep(current);
-  const minValue = current.type === 'pct' ? 0.1 : 0.01;
-  const nextValue = Math.max(Math.round((current.value + (dir === 'inc' ? step : -step)) * 100) / 100, minValue);
+  const minValue = current.type === 'pct' ? 0.1 : 0.0001;
+  const nextValue = Math.max(Math.round((current.value + (dir === 'inc' ? step : -step)) * 1e8) / 1e8, minValue);
   await thresholdsDb.set(symbol, nextValue, current.type);
   await ctx.answerCbQuery();
   await coinSettingsScreen(ctx, symbol);
@@ -292,8 +362,8 @@ async function milestoneHeuristicBase(symbol) {
 async function milestoneAdjust(ctx, symbol, dir) {
   let base = await milestonesDb.getEffectiveStep(symbol);
   if (!base) base = await milestoneHeuristicBase(symbol);
-  const step = Math.max(Math.round(base * 0.1 * 100) / 100, 0.01);
-  const next = Math.max(Math.round((base + (dir === 'inc' ? step : -step)) * 100) / 100, 0.01);
+  const step = format.niceStep(base, 0.0001);
+  const next = Math.max(Math.round((base + (dir === 'inc' ? step : -step)) * 1e8) / 1e8, 0.0001);
   await milestonesDb.set(symbol, next);
   await ctx.answerCbQuery();
   await coinSettingsScreen(ctx, symbol);
@@ -415,15 +485,18 @@ async function pause(ctx) {
   const durationMs = parseDuration(parts[1]);
   if (durationMs) {
     await settingsDb.setPausedUntil(new Date(Date.now() + durationMs));
+    eventsDb.recordAudit(`paused for ${formatRemaining(durationMs)}`).catch(() => {});
     await ctx.reply(`Paused for ${formatRemaining(durationMs)} \u2014 will auto-resume, or /resume any time sooner.`);
     return;
   }
   await settingsDb.setPaused(true);
+  eventsDb.recordAudit('paused (indefinitely)').catch(() => {});
   await ctx.reply('Paused \u2014 no alerts will be posted until you /resume.');
 }
 
 async function resume(ctx) {
   await settingsDb.setPaused(false);
+  eventsDb.recordAudit('resumed').catch(() => {});
   if (ctx.updateType === 'callback_query') {
     await ctx.answerCbQuery('Resumed');
     await home(ctx);
@@ -435,6 +508,52 @@ async function resume(ctx) {
 async function pauseMenuScreen(ctx) {
   const [paused, pausedUntil] = await Promise.all([settingsDb.isPaused(), settingsDb.getPausedUntil()]);
   await inlineEdit(ctx, menu.pauseMenu({ paused, pausedUntil }));
+}
+
+async function quietHoursCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  if ((parts[1] || '').toLowerCase() === 'off') {
+    await settingsDb.clearQuietHours();
+    eventsDb.recordAudit('quiet hours: off').catch(() => {});
+    await ctx.reply('Quiet hours turned off.');
+    return;
+  }
+  const start = Number(parts[1]);
+  const end = Number(parts[2]);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > 23 || end < 0 || end > 23) {
+    const current = await settingsDb.getQuietHours();
+    await ctx.reply(
+      `Usage: /quiethours START END (UTC hours, 0-23) \u2014 e.g. /quiethours 0 7 for midnight-7am\nOr: /quiethours off\n\n` +
+        `Currently: ${current ? `${current.startHourUtc}:00-${current.endHourUtc}:00 UTC` : 'off'}`
+    );
+    return;
+  }
+  await settingsDb.setQuietHours(start, end);
+  eventsDb.recordAudit(`quiet hours: ${start}:00-${end}:00 UTC`).catch(() => {});
+  await ctx.reply(
+    `Quiet hours set to ${start}:00-${end}:00 UTC \u2014 threshold and milestone alerts will be held during that window (post/chart schedules too; digests are exempt) and catch up once it ends.`
+  );
+}
+
+async function cardStyleCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const choice = (parts[1] || '').toLowerCase();
+  if (choice !== 'compact' && choice !== 'full') {
+    const current = await settingsDb.getCompactCards();
+    await ctx.reply(`Usage: /cardstyle compact|full\nCurrently: ${current ? 'compact' : 'full'}`);
+    return;
+  }
+  await settingsDb.setCompactCards(choice === 'compact');
+  eventsDb.recordAudit(`card style: ${choice}`).catch(() => {});
+  await ctx.reply(`Card style set to "${choice}".`);
+}
+async function cardStyleToggle(ctx) {
+  const current = await settingsDb.getCompactCards();
+  await settingsDb.setCompactCards(!current);
+  eventsDb.recordAudit(`card style: ${!current ? 'compact' : 'full'}`).catch(() => {});
+  await ctx.answerCbQuery(!current ? 'Compact cards on' : 'Full cards on');
+  const [compactCards, quietHours] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours()]);
+  await inlineEdit(ctx, menu.settings({ compactCards, quietHours }));
 }
 
 const DURATION_CODES = { '30m': '30m', '1h': '1h', '4h': '4h', '1d': '1d', indef: null };
@@ -463,6 +582,7 @@ async function mute(ctx) {
   }
   const durationMs = parseDuration(parts[2]) || config.defaultMuteMs;
   await coinStateDb.setMuteUntil(symbol, new Date(Date.now() + durationMs));
+  eventsDb.recordAudit(`${symbol} muted for ${formatRemaining(durationMs)}`).catch(() => {});
   await ctx.reply(`${symbol} muted for ${formatRemaining(durationMs)}. /unmute ${symbol} to lift it early.`);
 }
 
@@ -474,6 +594,7 @@ async function unmute(ctx) {
     return;
   }
   await coinStateDb.clearMute(symbol);
+  eventsDb.recordAudit(`${symbol} unmuted`).catch(() => {});
   await ctx.reply(`${symbol} unmuted.`);
 }
 
@@ -664,6 +785,7 @@ async function addCoinConfirmExecute(ctx) {
   pendingAddCoin = null;
   try {
     const { logoSource } = await coinRegistry.addCoin({ symbol, name, binancePair: pair, color });
+    eventsDb.recordAudit(`added coin ${symbol} (${pair})`).catch(() => {});
     await ctx.reply(
       `${symbol} added \u2014 tracking ${pair}. Logo ${logoSource === 'downloaded' ? 'downloaded' : 'using a plain fallback'}.`
     );
@@ -858,6 +980,55 @@ async function broadcastPick(ctx, channelName) {
 // ---------------------------------------------------------------------------
 // Captions / templates / variables — now with type:SYMBOL overrides
 // ---------------------------------------------------------------------------
+// Ready-made caption "packs" — apply all four alert types at once with
+// /applycaptionpack NAME, or fine-tune afterward as normal. Each replaces
+// the type-wide template only, never a per-coin override.
+const CAPTION_PACKS = {
+  professional: {
+    threshold: '<b>{name}</b> ({symbol})\nPrice: ${price}\nChange: {direction_arrow} {change_pct}%\n{channel_handle}',
+    milestone: '<b>{name}</b> ({symbol}) has crossed ${milestone_level}.\nCurrent price: ${price}\n{channel_handle}',
+    manual: '<b>{name}</b> ({symbol}) \u2014 Market Update\nPrice: ${price}\n24h change: {direction_arrow} {change_pct}%\n{channel_handle}',
+    chart: '<b>{name}</b> ({symbol}) \u2014 {period_label}\n{channel_handle}',
+  },
+  meme: {
+    threshold: '\uD83D\uDEA8 {symbol} JUST MOVED \uD83D\uDEA8\n{direction_arrow} {change_pct}% \u2014 now ${price}\nLFG {channel_handle}',
+    milestone: '\uD83D\uDE80 {symbol} SMASHED THROUGH ${milestone_level} \uD83D\uDE80\n${price} and climbing\n{channel_handle}',
+    manual: '\uD83D\uDC40 {symbol} check-in: ${price}\n{direction_arrow} {change_pct}% today\n{channel_handle}',
+    chart: '\uD83D\uDCC9 {symbol} chart \u2014 {period_label} \uD83D\uDC40\n{channel_handle}',
+  },
+  minimal: {
+    threshold: '{symbol} ${price} {direction_arrow}{change_pct}%',
+    milestone: '{symbol} ${milestone_level} {direction_arrow}',
+    manual: '{symbol} ${price}',
+    chart: '{symbol} {period_label}',
+  },
+};
+
+async function applyCaptionPackCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const packName = (parts[1] || '').toLowerCase();
+  const pack = CAPTION_PACKS[packName];
+  if (!pack) {
+    await ctx.reply(`Usage: /applycaptionpack NAME\nAvailable: ${Object.keys(CAPTION_PACKS).join(', ')}`);
+    return;
+  }
+  for (const [type, template] of Object.entries(pack)) await templatesDb.set(type, template);
+  await ctx.reply(`Applied the "${packName}" caption pack to all four alert types. Fine-tune any of them with /setcaption, or /resetcaption TYPE to revert just one.`);
+}
+async function captionPackMenuScreen(ctx) {
+  await inlineEdit(ctx, menu.captionPackMenu(Object.keys(CAPTION_PACKS)));
+}
+async function captionPackApply(ctx, packName) {
+  const pack = CAPTION_PACKS[packName];
+  if (!pack) {
+    await ctx.answerCbQuery('Unknown pack');
+    return;
+  }
+  for (const [type, template] of Object.entries(pack)) await templatesDb.set(type, template);
+  await ctx.answerCbQuery(`Applied "${packName}"`);
+  await ctx.reply(`Applied the "${packName}" caption pack to all four alert types.`);
+}
+
 async function captionTypesScreen(ctx) {
   await inlineEdit(ctx, menu.captionTypes());
 }
@@ -1544,6 +1715,7 @@ async function resetExecute(ctx, type) {
     await ctx.reply('Unknown reset type.');
     return;
   }
+  eventsDb.recordAudit(`reset: ${type}`).catch(() => {});
   await ctx.reply(`Reset complete: ${type}.`);
 }
 
@@ -1916,8 +2088,13 @@ module.exports = {
   pricesCmd,
   statsCmd,
   settingsCmd,
+  usageCmd,
+  usageScreen,
+  auditLogCmd,
+  auditLogScreen,
   pinManageScreen,
   pinToggle,
+  killSwitchToggle,
   thresholdsCmd,
   thresholdAdjust,
   setThreshold,
@@ -1940,6 +2117,9 @@ module.exports = {
   resume,
   pauseMenuScreen,
   pauseApply,
+  quietHoursCmd,
+  cardStyleCmd,
+  cardStyleToggle,
   mute,
   unmute,
   muteMenuScreen,
@@ -1981,6 +2161,9 @@ module.exports = {
   broadcastMenuScreen,
   broadcastPick,
   captionTypesScreen,
+  captionPackMenuScreen,
+  captionPackApply,
+  applyCaptionPackCmd,
   captionDetailScreen,
   captionEditStart,
   captionReset,

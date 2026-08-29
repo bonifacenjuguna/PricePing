@@ -2,8 +2,25 @@
 
 Telegram bot (`@PricePingAlertsBot`) that posts real-time crypto price alerts
 to Telegram channels, plus a fully button-driven private admin panel for
-managing it. Currently at **v0.5.0**. Full version history and the
+managing it. Currently at **v0.6.0**. Full version history and the
 complete feature backlog live in [`CHANGELOG.md`](./CHANGELOG.md).
+
+## What's new in v0.6.0
+
+- **Multi-admin viewer role** (`VIEWER_TELEGRAM_IDS`) — read-only
+  co-admins who can check status/prices/history/stats but can't change
+  anything.
+- **Kill switch** on Home — one tap stops everything and snapshots
+  exactly what was running; a second tap restores it precisely.
+- **Quiet hours** (`/quiethours START END`) — hold alerts during a window
+  (handles overnight wraparound), catch up once it ends.
+- **Caption packs**, **`{coin_emoji}`**, **milestone visual tiering** (big
+  crossings get a 🎉 treatment), **compact card style**, **usage
+  analytics** (`/usage`), and an **audit log** (`/auditlog`) of recent
+  config changes.
+- Threshold/milestone ± buttons now step by round numbers instead of an
+  exact-but-fussy 10%, and Telegram rate-limit backoff now respects the
+  server's actual `retry_after` value.
 
 ## What's new in v0.5.0
 

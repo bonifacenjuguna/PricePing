@@ -13,6 +13,8 @@ const LOGO_CIRCLE_CX = 170;
 const LOGO_CIRCLE_CY = 195;
 const LOGO_CIRCLE_R = 112;
 const LOGO_SIZE = 196; // was 148 — fills more of the white circle, margin still visible (~14px ring)
+const COMPACT_LOGO_CIRCLE_CY = 180;
+const COMPACT_LOGO_SIZE = 160;
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
@@ -22,7 +24,7 @@ const DOWN_COLOR = '#C62828';
 // The coin logo itself is NOT drawn here — see render() below, it's
 // composited afterward from a pre-converted local PNG so we never need to
 // parse/embed a second SVG document at request time.
-function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel }) {
+function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel, isBigMilestone, compact }) {
   const textColor = contrastTextColor(coin.color);
   const subTextColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.78)' : 'rgba(26,26,26,0.68)';
 
@@ -33,15 +35,20 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   let badge = '';
   const isMilestone = alertType === 'milestone';
   if (isMilestone || (!coin.isStable && direction && changePct !== null && changePct !== undefined)) {
+    // Big milestones (crossing a multiple of 10x the coin's step) get a
+    // celebratory 🎉 prefix and a taller badge instead of the routine one.
     const badgeColor = direction === 'up' ? UP_COLOR : DOWN_COLOR;
     const arrow = format.directionSymbol(direction);
-    const badgeText = isMilestone ? `${arrow} $${format.formatPrice(milestoneLevel)}` : `${arrow} ${format.formatPct(changePct)}`;
-    const badgeWidth = 60 + badgeText.length * 17;
+    const bigPrefix = isMilestone && isBigMilestone ? '\uD83C\uDF89 ' : '';
+    const badgeText = isMilestone ? `${bigPrefix}${arrow} $${format.formatPrice(milestoneLevel)}` : `${arrow} ${format.formatPct(changePct)}`;
+    const badgeHeight = isBigMilestone ? 84 : 72;
+    const badgeFontSize = isBigMilestone ? 38 : 34;
+    const badgeWidth = 60 + badgeText.length * (isBigMilestone ? 19 : 17);
     const badgeX = CARD_WIDTH - 60 - badgeWidth;
     badge = `
-      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="72" rx="36" fill="${badgeColor}" />
-      <text x="${badgeX + badgeWidth / 2}" y="106" font-family="Poppins, sans-serif"
-            font-size="34" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(
+      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="${badgeColor}" />
+      <text x="${badgeX + badgeWidth / 2}" y="${60 + badgeHeight / 2 + 12}" font-family="Poppins, sans-serif"
+            font-size="${badgeFontSize}" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(
               badgeText
             )}</text>`;
   }
@@ -50,6 +57,26 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
     <text x="${CARD_WIDTH - 40}" y="${CARD_HEIGHT - 36}" font-family="Poppins, sans-serif"
           font-size="30" font-weight="700" fill="${textColor}" text-anchor="end"
           opacity="0.95">@PricePing</text>`;
+
+  // Compact style: no name/symbol subtitle block, smaller canvas, price
+  // sits higher — for channels that want less visual noise per post.
+  if (compact) {
+    const compactHeight = 360;
+    return `
+<svg width="${CARD_WIDTH}" height="${compactHeight}" viewBox="0 0 ${CARD_WIDTH} ${compactHeight}"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>${FONT_FACES}</defs>
+  <rect x="0" y="0" width="${CARD_WIDTH}" height="${compactHeight}" fill="${coin.color}" />
+  <circle cx="${LOGO_CIRCLE_CX}" cy="180" r="90" fill="#FFFFFF" opacity="0.95" />
+  <text x="${LOGO_CIRCLE_CX + 90 + 40}" y="200" font-family="Poppins, sans-serif"
+        font-size="52" font-weight="700" fill="${textColor}">${symbolStr}</text>
+  <text x="100" y="290" font-family="Poppins, sans-serif" font-size="78" font-weight="700"
+        fill="${textColor}">${escapeXml(priceStr)}</text>
+  ${badge}
+  <text x="${CARD_WIDTH - 40}" y="${compactHeight - 30}" font-family="Poppins, sans-serif"
+        font-size="26" font-weight="700" fill="${textColor}" text-anchor="end" opacity="0.95">@PricePing</text>
+</svg>`;
+  }
 
   return `
 <svg width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}"
@@ -167,15 +194,17 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
 </svg>`;
 }
 
-async function compositeLogo(base, coin) {
+async function compositeLogo(base, coin, compact) {
   const logoPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
   if (!fs.existsSync(logoPath)) return base;
-  const logoBuffer = await sharp(logoPath).resize(LOGO_SIZE, LOGO_SIZE, { fit: 'contain' }).toBuffer();
+  const size = compact ? COMPACT_LOGO_SIZE : LOGO_SIZE;
+  const cy = compact ? COMPACT_LOGO_CIRCLE_CY : LOGO_CIRCLE_CY;
+  const logoBuffer = await sharp(logoPath).resize(size, size, { fit: 'contain' }).toBuffer();
   return base.composite([
     {
       input: logoBuffer,
-      left: Math.round(LOGO_CIRCLE_CX - LOGO_SIZE / 2),
-      top: Math.round(LOGO_CIRCLE_CY - LOGO_SIZE / 2),
+      left: Math.round(LOGO_CIRCLE_CX - size / 2),
+      top: Math.round(cy - size / 2),
     },
   ]);
 }
@@ -184,11 +213,13 @@ async function compositeLogo(base, coin) {
 // price: current price (number)
 // changeUsd/changePct/direction: null for stablecoins, or the move since
 //   the last alert for everything else
+// isBigMilestone: for milestone alerts only — a "big" round-number crossing
+// compact: render the smaller no-subtitle style (see settingsDb.getCompactCards)
 // Returns a PNG Buffer ready to send to Telegram.
-async function renderCard({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel }) {
-  const svg = buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel });
+async function renderCard({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel, isBigMilestone, compact }) {
+  const svg = buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel, isBigMilestone, compact });
   const base = sharp(Buffer.from(svg)).png();
-  const pipeline = await compositeLogo(base, coin);
+  const pipeline = await compositeLogo(base, coin, compact);
   return pipeline.toBuffer();
 }
 
@@ -198,7 +229,7 @@ async function renderCard({ coin, price, changeUsd, changePct, direction, alertT
 async function renderRichCard({ coin, price, stats24h, candles }) {
   const svg = buildRichBackgroundSvg({ coin, price, stats24h, candles });
   const base = sharp(Buffer.from(svg)).png();
-  const pipeline = await compositeLogo(base, coin);
+  const pipeline = await compositeLogo(base, coin, false);
   return pipeline.toBuffer();
 }
 

@@ -3,6 +3,53 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.0 — Safety, personalization, and role-based access (partial pass on the full backlog)
+
+This is one pass through the large backlog below, not the whole thing —
+see "Backlog" at the end for everything still outstanding.
+
+**Added**
+- `{coin_emoji}` caption variable — every tracked coin now has an emoji
+  identity (🟠 BTC, 🔷 ETH, 🐕 DOGE, etc., see `src/coins.js`).
+- Threshold/milestone ± buttons now step by a "nice" round number (1/2/5 ×
+  a power of 10) close to 10% of the current value, instead of an exact-
+  but-fussy 10% — e.g. a $0.02 XRP threshold now steps by $0.005, not
+  $0.002.
+- Adaptive Telegram rate-limit backoff — a 429 response's actual
+  `retry_after` value is now respected instead of a blind fixed 2s delay.
+- **Multi-admin viewer role** — `VIEWER_TELEGRAM_IDS` (comma-separated)
+  grants read-only co-admins access to status/prices/history/stats/etc.
+  without letting them change anything. Every mutating command and
+  button stays owner-only.
+- **Kill switch** — one tap on Home stops everything (global pause + a
+  snapshot of every coin's current mute state); a second tap restores
+  exactly what was running before, including which specific coins were
+  muted.
+- **Caption packs** — `/applycaptionpack professional|meme|minimal` (or
+  Captions → "🎨 Apply a caption pack") applies a ready-made caption style
+  to all four alert types at once; still fully editable afterward.
+- **Usage analytics** — `/usage` shows which commands actually get used
+  and how often, tracked automatically by a lightweight bot-level
+  middleware.
+- **Audit log** — `/auditlog` (or Settings → "📋 Audit log") shows the last
+  15 config changes in plain English: threshold/milestone/cooldown edits,
+  channel removal, caption changes, schedule/rule removal, pause/mute,
+  new coins, resets, and kill-switch use.
+- **Quiet hours** — `/quiethours START END` (UTC) holds threshold and
+  milestone alerts during a window (correctly handles overnight windows
+  like 22:00-07:00), then lets the next real comparison catch up once it
+  ends; post/chart schedules pause too, digests are exempt since the
+  admin already chose their hour on purpose.
+- **Milestone visual tiering** — crossing a "big" round number (10× the
+  coin's step, e.g. every $5,000 for a $500-step coin) now gets a 🎉
+  prefix and a more prominent badge on the card, distinct from routine
+  crossings.
+- **Compact card style** — `/cardstyle compact|full` (or a toggle on
+  Settings) switches every automatic alert card to a smaller, subtitle-
+  free layout for channels that want less visual noise per post.
+
+---
+
 ## v0.5.0 — Undo, safety rails, and preview/history/pin upgrades
 
 **Added**
@@ -162,8 +209,15 @@ memory watchdog, Railway deployment via `nixpacks.toml`/`railway.json`.
 ## Backlog — proposed, not yet built
 
 Everything below was discussed and locked in across planning
-conversations but isn't in the codebase yet. Listed here so nothing gets
-lost; each is a candidate for a future version.
+conversations but isn't in the codebase yet. This list is worked through
+version by version — v0.6.0 closed out the items marked done in that
+section above. Listed here so nothing gets lost.
+
+**Queued next**: per-schedule coin selection for digests (the
+`schedules.symbols` column exists from the v0.6.0 migration but isn't
+wired into `digest.js`/`automationScheduler.js` yet), optional local-
+timezone display, breadcrumb text on nested screens, pagination for long
+schedule/rule lists.
 
 **Market intelligence**: velocity/acceleration alerts, volume spike
 alerts, divergence alerts (e.g. BTC vs ETH), ATH/ATL distance tracking +
@@ -171,18 +225,12 @@ alerts, "quiet coin" report, correlation snapshot (e.g. BTC vs gold),
 volatility-regime detection, multi-timeframe milestone context ("last hit
 this level 3 days ago"), `/compare BTC ETH 7d` normalized chart.
 
-**Content & format**: card themes (minimal/retro/holiday), `{coin_emoji}`
-variable, compact vs. detailed card toggle, Telegram poll auto-attached to
-milestone posts, per-channel branding, rotating "mood" captions
-(`{random:...}` syntax), big-milestone vs. routine-milestone visual
-tiering.
+**Content & format**: card themes (minimal/retro/holiday), Telegram poll
+auto-attached to milestone posts, per-channel branding, rotating "mood"
+captions (`{random:...}` syntax).
 
-**Operational / safety**: one-tap kill switch with snapshot + restore,
-multi-admin viewer role, caption template packs (Professional/Meme/
-Minimal), adaptive Telegram rate-limit backoff (respect `retry_after`).
-
-**Bot self-awareness / meta**: command usage analytics, `/auditlog`,
-dry-run/preview mode for new automation before it goes live.
+**Operational / safety**: dry-run/preview mode for new automation before
+it goes live.
 
 **Distribution & reach**: outbound webhook rule action (Discord/Zapier/
 etc.), shareable per-alert web permalink.
@@ -193,10 +241,6 @@ posts (schedule a one-off message for a future date), "coin of the week"
 spotlight, community suggestion inbox routing into `/addcoin`.
 *(Prediction game explicitly excluded per instruction.)*
 
-**Further polish**: threshold/milestone step-sizing tuned to price
-magnitude rather than a flat %, plain-English validation preview before
-creating a rule/schedule, per-schedule coin selection for digests,
-quiet-hours/weekend-aware scheduling, "what changed since yesterday"
-digest addendum, emoji-reaction tracking in `/stats`, optional
-local-timezone display, breadcrumb text on nested screens, pagination for
-long schedule/rule lists.
+**Further polish**: plain-English validation preview before creating a
+rule/schedule, "what changed since yesterday" digest addendum, emoji-
+reaction tracking in `/stats`.

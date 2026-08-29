@@ -12,15 +12,15 @@ const path = require('path');
 // (stablecoins — a "milestone" at $1.00 is meaningless noise).
 // ---------------------------------------------------------------------------
 const coins = [
-  { symbol: 'BTC', name: 'Bitcoin', binancePair: 'BTCUSDT', color: '#F7931A', isStable: false, milestoneStep: 10000 },
-  { symbol: 'ETH', name: 'Ethereum', binancePair: 'ETHUSDT', color: '#627EEA', isStable: false, milestoneStep: 500 },
-  { symbol: 'BNB', name: 'BNB', binancePair: 'BNBUSDT', color: '#F0B90B', isStable: false, milestoneStep: 50 },
-  { symbol: 'SOL', name: 'Solana', binancePair: 'SOLUSDT', color: '#9945FF', isStable: false, milestoneStep: 20 },
-  { symbol: 'XRP', name: 'XRP', binancePair: 'XRPUSDT', color: '#23292F', isStable: false, milestoneStep: 0.5 },
-  { symbol: 'TRX', name: 'TRON', binancePair: 'TRXUSDT', color: '#EF0027', isStable: false, milestoneStep: 0.05 },
-  { symbol: 'DOGE', name: 'Dogecoin', binancePair: 'DOGEUSDT', color: '#C2A633', isStable: false, milestoneStep: 0.05 },
-  { symbol: 'XAUT', name: 'Tether Gold', binancePair: 'XAUTUSDT', color: '#D4AF37', isStable: false, milestoneStep: 100 },
-  { symbol: 'USDC', name: 'USD Coin', binancePair: 'USDCUSDT', color: '#2775CA', isStable: true, milestoneStep: null },
+  { symbol: 'BTC', name: 'Bitcoin', binancePair: 'BTCUSDT', color: '#F7931A', emoji: '🟠', isStable: false, milestoneStep: 10000 },
+  { symbol: 'ETH', name: 'Ethereum', binancePair: 'ETHUSDT', color: '#627EEA', emoji: '🔷', isStable: false, milestoneStep: 500 },
+  { symbol: 'BNB', name: 'BNB', binancePair: 'BNBUSDT', color: '#F0B90B', emoji: '🟡', isStable: false, milestoneStep: 50 },
+  { symbol: 'SOL', name: 'Solana', binancePair: 'SOLUSDT', color: '#9945FF', emoji: '🟣', isStable: false, milestoneStep: 20 },
+  { symbol: 'XRP', name: 'XRP', binancePair: 'XRPUSDT', color: '#23292F', emoji: '⚪', isStable: false, milestoneStep: 0.5 },
+  { symbol: 'TRX', name: 'TRON', binancePair: 'TRXUSDT', color: '#EF0027', emoji: '🔴', isStable: false, milestoneStep: 0.05 },
+  { symbol: 'DOGE', name: 'Dogecoin', binancePair: 'DOGEUSDT', color: '#C2A633', emoji: '🐕', isStable: false, milestoneStep: 0.05 },
+  { symbol: 'XAUT', name: 'Tether Gold', binancePair: 'XAUTUSDT', color: '#D4AF37', emoji: '🥇', isStable: false, milestoneStep: 100 },
+  { symbol: 'USDC', name: 'USD Coin', binancePair: 'USDCUSDT', color: '#2775CA', emoji: '🔵', isStable: true, milestoneStep: null },
   {
     symbol: 'USDT',
     name: 'Tether',

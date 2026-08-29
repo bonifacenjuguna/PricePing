@@ -36,6 +36,17 @@ function muteActive(pausedUntil) {
   return new Date(pausedUntil).getTime() > Date.now();
 }
 
+// Handles overnight windows (e.g. start=22, end=7 means "quiet from 22:00
+// to 07:00 UTC", wrapping past midnight) as well as same-day windows.
+function isWithinQuietHours(quietHours, now = new Date()) {
+  if (!quietHours) return false;
+  const { startHourUtc, endHourUtc } = quietHours;
+  const hour = now.getUTCHours();
+  if (startHourUtc === endHourUtc) return false; // a zero-width window means "off"
+  if (startHourUtc < endHourUtc) return hour >= startHourUtc && hour < endHourUtc;
+  return hour >= startHourUtc || hour < endHourUtc; // wraps past midnight
+}
+
 async function handleBinanceFailure(bot, err) {
   consecutiveFailures += 1;
   logger.warn(`Binance fetch failed (${consecutiveFailures} consecutive)`, { message: err.message });
@@ -92,6 +103,10 @@ function qualifiesForThresholdAlert(price, baseline, threshold) {
 async function tickInner(bot) {
   const paused = await resolvePauseState();
   if (paused) return;
+
+  const quietHours = await settingsDb.getQuietHours();
+  const quietNow = isWithinQuietHours(quietHours);
+  const compact = await settingsDb.getCompactCards();
 
   const [thresholdChannel, milestoneChannel] = await Promise.all([
     channelsDb.resolveForType('threshold'),
@@ -165,7 +180,11 @@ async function tickInner(bot) {
       const milestone = checkMilestone(coin, price, milestoneInfo.step, state.lastMilestone);
       if (milestone) {
         await coinStateDb.setLastMilestone(coin.symbol, milestone.level);
-        if (!milestone.seedOnly) {
+        if (!milestone.seedOnly && !quietNow) {
+          // "Big" milestone = crossing a multiple of 10x the step (e.g.
+          // every $5,000 for a coin with a $500 step) — gets a more
+          // prominent card treatment, see cardRenderer.js.
+          const isBigMilestone = milestoneInfo.step > 0 && Math.abs(milestone.level / (milestoneInfo.step * 10)) % 1 < 1e-9;
           toSend.push({
             coin,
             price,
@@ -174,6 +193,8 @@ async function tickInner(bot) {
             direction: milestone.direction,
             alertType: 'milestone',
             milestoneLevel: milestone.level,
+            isBigMilestone,
+            compact,
             channel: milestoneChannel,
           });
         }
@@ -192,7 +213,7 @@ async function tickInner(bot) {
     if (baseline === null || baseline === undefined) continue;
 
     const { qualifies, changeUsd, changePct } = qualifiesForThresholdAlert(price, baseline, threshold);
-    if (!qualifies) continue;
+    if (!qualifies || quietNow) continue;
 
     const cooldownMinutes = cooldownOverrides[coin.symbol] ?? config.cooldownMinutes;
     if (cooldownActive(state.lastAlertAt, cooldownMinutes)) continue;
@@ -207,6 +228,7 @@ async function tickInner(bot) {
       alertType: 'threshold',
       threshold,
       cooldownRemainingMs: cooldownMinutes * 60 * 1000,
+      compact,
       channel: thresholdChannel,
     });
   }
@@ -281,4 +303,4 @@ async function tick(bot) {
   }
 }
 
-module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone };
+module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone, isWithinQuietHours };

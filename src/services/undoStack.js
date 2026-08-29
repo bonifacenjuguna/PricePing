@@ -9,6 +9,8 @@
 // reset). The ± adjustment buttons don't, since they redraw the screen
 // they're on and a stray "Undo" button there would just be noise for what
 // is by definition an easily-repeatable single-step nudge.
+const eventsDb = require('../db/events');
+
 const MAX_ENTRIES = 8;
 const TTL_MS = 15 * 60 * 1000; // an undo button older than this is more likely to confuse than help
 
@@ -19,6 +21,11 @@ function push(label, undoFn) {
   const id = nextId++;
   entries.push({ id, label, undoFn, createdAt: Date.now() });
   if (entries.length > MAX_ENTRIES) entries.shift();
+  // Every undo-able action is by definition a meaningful config change —
+  // piggybacking the audit trail here covers threshold/milestone/cooldown
+  // edits, channel removal, caption changes, and schedule/rule removal in
+  // one place instead of instrumenting each mutation site separately.
+  eventsDb.recordAudit(label).catch(() => {});
   return id;
 }
 

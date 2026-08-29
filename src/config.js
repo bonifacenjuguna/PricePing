@@ -16,6 +16,12 @@ module.exports = {
   botName: process.env.BOT_NAME || 'PricePing',
   adminId: Number(required('ADMIN_TELEGRAM_ID')),
   adminName: process.env.ADMIN_NAME || 'Admin',
+  // Read-only co-admins — comma-separated Telegram IDs, e.g. "111,222".
+  // See VIEWER_COMMANDS in handlers/middleware.js for exactly what they can run.
+  viewerIds: (process.env.VIEWER_TELEGRAM_IDS || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0),
   channelId: required('CHANNEL_ID'), // e.g. @PricePing or -100xxxxxxxxxx
 
   webhookUrl: process.env.WEBHOOK_URL || null,

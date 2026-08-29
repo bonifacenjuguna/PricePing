@@ -1,7 +1,9 @@
 const logger = require('../utils/logger');
 const schedulesDb = require('../db/schedules');
+const settingsDb = require('../db/settings');
 const actions = require('./actions');
 const digest = require('./digest');
+const { isWithinQuietHours } = require('./poller');
 
 // Checked every 5 minutes, same pattern as digest.js — deliberately not
 // tied to POLL_INTERVAL_MS so alert-tick timing changes never affect
@@ -50,9 +52,17 @@ async function checkAndRun(bot) {
   }
 
   const now = new Date();
+  const quietHours = await settingsDb.getQuietHours().catch(() => null);
+  const quietNow = isWithinQuietHours(quietHours, now);
+
   for (const schedule of schedules) {
     const { due, runKey } = computeDue(schedule, now);
     if (!due) continue;
+    // Digests are exempt — the admin already picked a specific hour for
+    // them on purpose; post/chart schedules hold during quiet hours and
+    // simply wait for their next scheduled slot (no catch-up needed,
+    // since they're not tracking a missed price move the way alerts are).
+    if (quietNow && schedule.kind !== 'digest') continue;
 
     try {
       let result;

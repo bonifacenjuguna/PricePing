@@ -82,6 +82,54 @@ async function setPinnedActions(keys) {
   return set('pinned_actions', JSON.stringify(keys.slice(0, 3)));
 }
 
+// Kill switch: snapshot the current pause state before force-pausing
+// everything, so a second tap can restore exactly what was running
+// before — including per-coin mutes, not just the global pause flag.
+async function getKillSnapshot() {
+  const raw = await get('kill_snapshot');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+async function setKillSnapshot(snapshot) {
+  return set('kill_snapshot', JSON.stringify(snapshot));
+}
+async function clearKillSnapshot() {
+  return remove('kill_snapshot');
+}
+
+// Quiet hours (UTC hour-of-day window, e.g. 0-7 for "don't post between
+// midnight and 7am") — checked by poller.js and automationScheduler.js.
+// Digest schedules are exempt (they're already scheduled for a specific
+// hour the admin chose on purpose).
+async function getQuietHours() {
+  const raw = await get('quiet_hours');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+async function setQuietHours(startHourUtc, endHourUtc) {
+  return set('quiet_hours', JSON.stringify({ startHourUtc, endHourUtc }));
+}
+async function clearQuietHours() {
+  return remove('quiet_hours');
+}
+
+// Compact card style — a smaller card (no logo circle, no subtitle) for
+// channels that want less visual noise. Global toggle, not per-channel.
+async function getCompactCards() {
+  return (await get('compact_cards')) === 'true';
+}
+async function setCompactCards(enabled) {
+  return set('compact_cards', enabled ? 'true' : 'false');
+}
+
 module.exports = {
   get,
   set,
@@ -98,4 +146,12 @@ module.exports = {
   setLastDigestDate,
   getPinnedActions,
   setPinnedActions,
+  getKillSnapshot,
+  setKillSnapshot,
+  clearKillSnapshot,
+  getQuietHours,
+  setQuietHours,
+  clearQuietHours,
+  getCompactCards,
+  setCompactCards,
 };

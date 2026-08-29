@@ -47,6 +47,8 @@ async function onCallback(ctx) {
           return commands.channelsScreen(ctx);
         case 'captiontypes':
           return commands.captionTypesScreen(ctx);
+        case 'captionpacks':
+          return commands.captionPackMenuScreen(ctx);
         case 'variables':
           return commands.variablesScreen(ctx);
         case 'schedules':
@@ -63,6 +65,10 @@ async function onCallback(ctx) {
           return commands.varsManageScreen(ctx);
         case 'backup':
           return commands.backupMenuScreen(ctx);
+        case 'auditlog':
+          return commands.auditLogScreen(ctx);
+        case 'usage':
+          return commands.usageScreen(ctx);
         case 'pins':
           return commands.pinManageScreen(ctx);
         case 'whoami':
@@ -93,6 +99,12 @@ async function onCallback(ctx) {
       if (a1 === 'test') {
         await ctx.answerCbQuery();
         return commands.sendTestAlert(ctx, a2);
+      }
+      if (a1 === 'killswitch') {
+        return commands.killSwitchToggle(ctx);
+      }
+      if (a1 === 'cardstyletoggle') {
+        return commands.cardStyleToggle(ctx);
       }
       return undefined;
     }
@@ -287,6 +299,14 @@ async function onCallback(ctx) {
     if (ns === 'broadcast') {
       if (a1 === 'pick') {
         return commands.broadcastPick(ctx, a2);
+      }
+      return undefined;
+    }
+
+    // ---- captionpack:apply:NAME ----
+    if (ns === 'captionpack') {
+      if (a1 === 'apply') {
+        return commands.captionPackApply(ctx, a2);
       }
       return undefined;
     }

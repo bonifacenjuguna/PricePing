@@ -7,6 +7,18 @@ const templateEngine = require('./templateEngine');
 // Generic retrying photo send — shared by every send path (threshold
 // alerts, manual posts, milestone alerts, charts, rule-driven mirrors). A
 // single failed send never blocks the rest of a tick or command.
+// Telegram's 429 responses include how long to actually wait
+// (err.response.parameters.retry_after, in seconds) — using that instead
+// of a blind fixed delay is the difference between "backs off correctly"
+// and "hammers the API again right when it just said not to."
+function backoffDelayMs(err, attempt) {
+  const retryAfterSec = err && err.response && err.response.parameters && err.response.parameters.retry_after;
+  if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return retryAfterSec * 1000 + 250; // small buffer past what Telegram asked for
+  }
+  return 2000 * attempt; // fixed-delay fallback for non-429 failures
+}
+
 async function sendPhotoWithRetry(telegram, chatId, buffer, filename, caption) {
   const attempts = 1 + config.telegramSendRetries;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -19,7 +31,7 @@ async function sendPhotoWithRetry(telegram, chatId, buffer, filename, caption) {
     } catch (err) {
       logger.warn(`Send attempt ${attempt}/${attempts} failed for ${filename}`, { message: err.message });
       if (attempt < attempts) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(err, attempt)));
       }
     }
   }
@@ -36,7 +48,7 @@ async function sendMessageWithRetry(telegram, chatId, text) {
     } catch (err) {
       logger.warn(`Message send attempt ${attempt}/${attempts} failed`, { message: err.message });
       if (attempt < attempts) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(err, attempt)));
       }
     }
   }

@@ -47,4 +47,25 @@ function timeAgo(date) {
   return `${days}d ago`;
 }
 
-module.exports = { formatPrice, formatChangeUsd, formatPct, directionSymbol, timeAgo };
+// Picks a "nice" step size (1/2/5 × a power of 10) close to roughly 10% of
+// the current value, instead of an exact-but-fussy 10% — e.g. a $0.02 XRP
+// threshold steps by $0.005 instead of $0.002. Used by the ± buttons for
+// both thresholds and milestones so nudging never lands on an odd number.
+function niceStep(value, minStep = 0.01) {
+  if (!Number.isFinite(value) || value <= 0) return minStep;
+  const target = value * 0.1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(target)));
+  const candidates = [1, 2, 5, 10].map((m) => m * magnitude);
+  let best = candidates[0];
+  let bestDiff = Math.abs(candidates[0] - target);
+  for (const c of candidates) {
+    const diff = Math.abs(c - target);
+    if (diff < bestDiff) {
+      best = c;
+      bestDiff = diff;
+    }
+  }
+  return Math.max(Math.round(best * 1e8) / 1e8, minStep);
+}
+
+module.exports = { formatPrice, formatChangeUsd, formatPct, directionSymbol, timeAgo, niceStep };

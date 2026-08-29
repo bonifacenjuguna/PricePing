@@ -77,7 +77,7 @@ function durationPicker(prefix, extraRows = []) {
 }
 
 // ---------- Home ----------
-function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat, pinnedKeys = [] }) {
+function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, heartbeat, pinnedKeys = [], killSwitchActive = false }) {
   const uptimeStr = formatUptime(uptimeSeconds);
 
   let statusLine = '\uD83D\uDFE2 Running';
@@ -128,6 +128,7 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
       { text: '\u2699 Settings', callback_data: 'nav:settings' },
     ],
+    [{ text: killSwitchActive ? '\u267B Restore (kill switch active)' : '\uD83D\uDED1 Kill switch', callback_data: 'action:killswitch' }],
     HUB_ROW,
   ];
 
@@ -470,7 +471,21 @@ function captionTypes() {
   const types = ['threshold', 'milestone', 'manual', 'chart'];
   const text = 'Which caption would you like to view or edit?\n(Per-coin overrides: /setcaption type:SYMBOL <template>)';
   const buttons = types.map((t) => ({ text: t, callback_data: `caption:type:${t}` }));
-  return { text, keyboard: [...chunk(buttons, 2), [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }], ...footer('nav:hub')] };
+  return {
+    text,
+    keyboard: [
+      ...chunk(buttons, 2),
+      [{ text: '\uD83C\uDFA8 Apply a caption pack', callback_data: 'nav:captionpacks' }],
+      [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }],
+      ...footer('nav:hub'),
+    ],
+  };
+}
+
+function captionPackMenu(packNames) {
+  const text = 'Caption packs \u2014 apply one to all four alert types at once. You can still fine-tune any of them afterward.';
+  const buttons = packNames.map((name) => ({ text: name, callback_data: `captionpack:apply:${name}` }));
+  return { text, keyboard: [...chunk(buttons, 2), ...footer('nav:captiontypes')] };
 }
 
 function captionDetail(alertType, currentTemplate, isCustom) {
@@ -581,6 +596,24 @@ function pinManage(pinnedKeys) {
   return { text, keyboard: [...chunk(buttons, 2), ...footer('nav:settings')] };
 }
 
+// ---------- Usage analytics ----------
+function usageList(rows) {
+  const lines = rows.length
+    ? rows.slice(0, 20).map((r) => `/${r.command}  \u00D7${r.count}  (last ${format.timeAgo(r.last_used_at)})`).join('\n')
+    : 'No command usage recorded yet.';
+  const text = `Command usage\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}`;
+  return { text, keyboard: footer('nav:settings') };
+}
+
+// ---------- Audit log ----------
+function auditLog(rows) {
+  const lines = rows.length
+    ? rows.map((r) => `${format.timeAgo(r.created_at)}  ${r.message}`).join('\n')
+    : 'No changes logged yet.';
+  const text = `Audit log \u2014 recent config changes\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines}`;
+  return { text, keyboard: footer('nav:settings') };
+}
+
 // ---------- Backup ----------
 function backupMenu() {
   const text = 'Backup \u2014 export every setting as a JSON file, or restore from a previous export.';
@@ -665,20 +698,27 @@ function stats({ today, allTime, perCoin }) {
 }
 
 // ---------- Settings ----------
-function settings() {
+function settings({ compactCards = false, quietHours = null } = {}) {
   const text =
     `Settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `Poll interval     ${config.pollIntervalMs / 1000}s\n` +
     `Cooldown default  ${config.cooldownMinutes}m per coin\n` +
     `Hourly send cap   ${config.maxAlertsPerHour}\n` +
-    `Memory limit      ${config.memoryLimitMb}MB\n\n` +
-    `These are environment variables and take effect on next restart. ` +
-    `Channels, captions, thresholds, milestones, cooldowns, schedules (including digests), and rules are all live \u2014 see /commands.`;
+    `Memory limit      ${config.memoryLimitMb}MB\n` +
+    `Card style        ${compactCards ? 'compact' : 'full'}\n` +
+    `Quiet hours       ${quietHours ? `${quietHours.startHourUtc}:00-${quietHours.endHourUtc}:00 UTC` : 'off'}\n\n` +
+    `Poll/cooldown/cap/memory are environment variables (next restart). ` +
+    `Everything else here \u2014 card style, quiet hours (/quiethours), channels, captions, thresholds, milestones, cooldowns, schedules, and rules \u2014 is live, see /commands.`;
   const keyboard = [
     [
       { text: '\u2B50 Quick actions', callback_data: 'nav:pins' },
       { text: '\uD83D\uDCBE Backup', callback_data: 'nav:backup' },
     ],
+    [
+      { text: '\uD83D\uDCCB Audit log', callback_data: 'nav:auditlog' },
+      { text: '\uD83D\uDCC8 Usage stats', callback_data: 'nav:usage' },
+    ],
+    [{ text: compactCards ? '\uD83D\uDDBC Switch to full cards' : '\uD83D\uDDBC Switch to compact cards', callback_data: 'action:cardstyletoggle' }],
     [{ text: '\uD83D\uDC64 Who am I', callback_data: 'nav:whoami' }],
     HUB_ROW,
     HOME_ROW,
@@ -754,6 +794,9 @@ module.exports = {
   historyMenu,
   historyDetail,
   pinManage,
+  captionPackMenu,
+  usageList,
+  auditLog,
   backupMenu,
   resetMenu,
   resetConfirm,

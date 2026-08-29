@@ -29,6 +29,19 @@ const bot = new Telegraf(config.botToken);
 // --- Access control: every update must be from the configured admin ---
 bot.use(accessGate());
 
+// Lightweight usage tracking — records which slash commands actually get
+// used, purely for the admin's own curiosity via /usage. Never blocks the
+// real handler and never throws into the update pipeline.
+const commandUsageDb = require('./db/commandUsage');
+bot.use(async (ctx, next) => {
+  const text = ctx.message && ctx.message.text;
+  if (typeof text === 'string' && text.startsWith('/')) {
+    const command = text.slice(1).split(/[\s@]/)[0].toLowerCase();
+    if (command) commandUsageDb.increment(command).catch(() => {});
+  }
+  return next();
+});
+
 // --- Commands ---
 bot.start(commands.start);
 bot.help(commands.help);
@@ -42,6 +55,8 @@ bot.command('thresholds', commands.thresholdsCmd);
 bot.command('setthreshold', commands.setThreshold);
 bot.command('pause', commands.pause);
 bot.command('resume', commands.resume);
+bot.command('quiethours', commands.quietHoursCmd);
+bot.command('cardstyle', commands.cardStyleCmd);
 bot.command('mute', commands.mute);
 bot.command('unmute', commands.unmute);
 bot.command('milestones', commands.milestonesCmd);
@@ -58,6 +73,7 @@ bot.command('removechannel', commands.removeChannelCmd);
 bot.command('setdefaultchannel', commands.setDefaultChannelCmd);
 bot.command('cleardefaultchannel', commands.clearDefaultChannelTypeCmd);
 bot.command('setcaption', commands.setCaptionCmd);
+bot.command('applycaptionpack', commands.applyCaptionPackCmd);
 bot.command('previewcaption', commands.previewCaptionCmd);
 bot.command('resetcaption', commands.resetCaptionCmd);
 bot.command('variables', commands.variablesCmd);
@@ -73,6 +89,8 @@ bot.command('importconfig', commands.importConfigCmd);
 bot.command('reset', commands.resetCmd);
 bot.command('test', commands.testAlert);
 bot.command('whoami', commands.whoami);
+bot.command('usage', commands.usageCmd);
+bot.command('auditlog', commands.auditLogCmd);
 bot.command('digestnow', commands.digestNowCmd);
 
 // --- Inline button taps ---
