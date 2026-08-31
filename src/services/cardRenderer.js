@@ -13,8 +13,9 @@ const LOGO_CIRCLE_CX = 170;
 const LOGO_CIRCLE_CY = 195;
 const LOGO_CIRCLE_R = 112;
 const LOGO_SIZE = 196; // was 148 — fills more of the white circle, margin still visible (~14px ring)
-const COMPACT_LOGO_CIRCLE_CY = 180;
-const COMPACT_LOGO_SIZE = 160;
+const COMPACT_LOGO_CIRCLE_CY = 115;
+const COMPACT_LOGO_CIRCLE_R = 65;
+const COMPACT_LOGO_SIZE = 114;
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
@@ -67,10 +68,10 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
      xmlns="http://www.w3.org/2000/svg">
   <defs>${FONT_FACES}</defs>
   <rect x="0" y="0" width="${CARD_WIDTH}" height="${compactHeight}" fill="${coin.color}" />
-  <circle cx="${LOGO_CIRCLE_CX}" cy="180" r="90" fill="#FFFFFF" opacity="0.95" />
-  <text x="${LOGO_CIRCLE_CX + 90 + 40}" y="200" font-family="Poppins, sans-serif"
+  <circle cx="${LOGO_CIRCLE_CX}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
+  <text x="${LOGO_CIRCLE_CX + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
         font-size="52" font-weight="700" fill="${textColor}">${symbolStr}</text>
-  <text x="100" y="290" font-family="Poppins, sans-serif" font-size="78" font-weight="700"
+  <text x="100" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
         fill="${textColor}">${escapeXml(priceStr)}</text>
   ${badge}
   <text x="${CARD_WIDTH - 40}" y="${compactHeight - 30}" font-family="Poppins, sans-serif"
