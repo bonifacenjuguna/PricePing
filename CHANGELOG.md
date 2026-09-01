@@ -3,6 +3,26 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.2 — Test/preview parity, watermark, caption layout
+
+**Fixed**
+- `/test SYMBOL`, the advanced `/test` picker (threshold + milestone),
+  and the full pipeline check (`/test full`) now all read the actual
+  `/cardstyle` setting before sending — previously they ignored it and
+  always rendered the full (tall) card, so a test could look completely
+  different from what a real alert actually posts.
+- Compact card: watermark raised off the bottom edge a bit.
+
+**Changed**
+- Threshold and milestone captions are now 2 lines instead of 3 — the
+  `%`/milestone line and `@PricePing` now share the second line, with
+  extra spacing between them. Only affects channels still on the
+  built-in default caption; anyone with a custom `/setcaption` template
+  keeps their own layout (run `/resetcaption` to pick up the new
+  default).
+
+---
+
 ## v0.6.1 — Compact card fixes
 
 **Fixed**

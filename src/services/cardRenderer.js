@@ -85,7 +85,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   if (compact) {
     const logoCx = LOGO_CIRCLE_CX + COMPACT_PAD;
     const compactBadge = renderBadge(COMPACT_WIDTH, 60 + COMPACT_PAD);
-    const compactWatermark = renderWatermark(COMPACT_WIDTH, 40 + COMPACT_PAD, COMPACT_HEIGHT - 30, 26);
+    const compactWatermark = renderWatermark(COMPACT_WIDTH, 40 + COMPACT_PAD, COMPACT_HEIGHT - 44, 26);
     return `
 <svg width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" viewBox="0 0 ${COMPACT_WIDTH} ${COMPACT_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">

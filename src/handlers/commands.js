@@ -1787,6 +1787,7 @@ async function sendTestAlert(ctx, symbol) {
   }
   if (price === undefined) price = 100;
 
+  const compact = await settingsDb.getCompactCards();
   const alert = {
     coin,
     price,
@@ -1795,6 +1796,7 @@ async function sendTestAlert(ctx, symbol) {
     direction: 'up',
     alertType: 'threshold',
     threshold: { value: 1, type: 'pct' },
+    compact,
   };
   const sent = await telegramSender.sendAlert(ctx.telegram, alert, channel);
   await ctx.reply(sent ? `Test alert sent to #${channel.name} for ${symbol}.` : `Could not send test alert for ${symbol}.`);
@@ -1845,6 +1847,7 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
 
   const pct = VALUE_PRESETS[valueCode] || 2;
   const simPrice = realPrice * (1 + pct / 100);
+  const compact = await settingsDb.getCompactCards();
 
   try {
     if (type === 'threshold') {
@@ -1858,6 +1861,7 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
         alertType: 'threshold',
         threshold,
         cooldownRemainingMs: config.cooldownMinutes * 60000,
+        compact,
       };
       const sent = await telegramSender.sendAlert(ctx.telegram, alert, channel);
       await ctx.reply(sent ? `Test threshold alert sent to #${channel.name}.` : 'Test send failed.');
@@ -1868,7 +1872,7 @@ async function testExecute(ctx, symbol, type, valueCode, dest) {
         return;
       }
       const level = pct >= 0 ? (Math.floor(realPrice / step) + 1) * step : (Math.floor(realPrice / step) - 1) * step;
-      const alert = { coin, price: level, changeUsd: null, changePct: null, direction: pct >= 0 ? 'up' : 'down', alertType: 'milestone', milestoneLevel: level };
+      const alert = { coin, price: level, changeUsd: null, changePct: null, direction: pct >= 0 ? 'up' : 'down', alertType: 'milestone', milestoneLevel: level, compact };
       const sent = await telegramSender.sendAlert(ctx.telegram, alert, channel);
       await ctx.reply(sent ? `Test milestone alert sent to #${channel.name}.` : 'Test send failed.');
     } else if (type === 'manual') {
@@ -1913,6 +1917,7 @@ async function testFull(ctx) {
   } catch {
     /* use fallback */
   }
+  const compact = await settingsDb.getCompactCards();
 
   async function step(label, fn) {
     try {
@@ -1927,7 +1932,7 @@ async function testFull(ctx) {
     const threshold = (await thresholdsDb.get(coin.symbol)) || { value: 1, type: 'pct' };
     return telegramSender.sendAlert(
       ctx.telegram,
-      { coin, price: realPrice * 1.02, changeUsd: realPrice * 0.02, changePct: 2, direction: 'up', alertType: 'threshold', threshold, cooldownRemainingMs: 300000 },
+      { coin, price: realPrice * 1.02, changeUsd: realPrice * 0.02, changePct: 2, direction: 'up', alertType: 'threshold', threshold, cooldownRemainingMs: 300000, compact },
       previewChannel
     );
   });
@@ -1938,7 +1943,7 @@ async function testFull(ctx) {
     const level = (Math.floor(realPrice / step_) + 1) * step_;
     return telegramSender.sendAlert(
       ctx.telegram,
-      { coin, price: level, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: level },
+      { coin, price: level, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: level, compact },
       previewChannel
     );
   });
@@ -1979,7 +1984,8 @@ async function testFailure(ctx, kind) {
   }
   if (kind === 'telegram') {
     const coin = findCoin('BTC') || config.coins[0];
-    const buffer = await cardRenderer.renderCard({ coin, price: 100, changeUsd: 1, changePct: 1, direction: 'up', alertType: 'threshold' });
+    const compact = await settingsDb.getCompactCards();
+    const buffer = await cardRenderer.renderCard({ coin, price: 100, changeUsd: 1, changePct: 1, direction: 'up', alertType: 'threshold', compact });
     const sent = await telegramSender.sendPhotoWithRetry(ctx.telegram, 'INVALID_CHAT_ID_FOR_TEST', buffer, 'test.png', 'test');
     await ctx.reply(
       sent
