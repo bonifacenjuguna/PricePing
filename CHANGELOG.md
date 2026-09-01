@@ -3,6 +3,24 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.1 — Compact card fixes
+
+**Fixed**
+- Compact card: price text no longer overlaps the logo circle.
+- Compact card: widened the canvas (1080→1300, height unchanged) and
+  pushed the logo/badge/watermark inward so Telegram's chat-list crop
+  (which clips the left/right edges of wide images in the feed preview)
+  lands on blank margin instead of content.
+- Caption `{channel_handle}` fallback now always includes the `@` prefix
+  (was rendering as `PricePing` instead of `@PricePing` for channels
+  without an `@username`-style chat ID).
+- `/test` and `/previewcaption` now render using the actual `/cardstyle`
+  setting — previously always rendered the full (non-compact) card
+  regardless of what was configured, so the preview never matched what
+  automatic alerts actually sent.
+
+---
+
 ## v0.6.0 — Safety, personalization, and role-based access (partial pass on the full backlog)
 
 This is one pass through the large backlog below, not the whole thing —

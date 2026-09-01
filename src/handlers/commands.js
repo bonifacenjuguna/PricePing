@@ -1098,11 +1098,12 @@ async function sendCaptionPreview(ctx, alertTypeArg) {
     return;
   }
   const sampleChannel = { name: 'preview', chatId: '@PricePing' };
+  const compact = await settingsDb.getCompactCards();
   let ctxData;
   if (base === 'threshold') {
-    ctxData = { coin, price: 109842.5, changeUsd: 512, changePct: 0.47, direction: 'up', alertType: 'threshold', threshold: { value: 400, type: 'usd' }, cooldownRemainingMs: 300000, channel: sampleChannel };
+    ctxData = { coin, price: 109842.5, changeUsd: 512, changePct: 0.47, direction: 'up', alertType: 'threshold', threshold: { value: 400, type: 'usd' }, cooldownRemainingMs: 300000, channel: sampleChannel, compact };
   } else if (base === 'milestone') {
-    ctxData = { coin, price: 110032, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: 110000, channel: sampleChannel };
+    ctxData = { coin, price: 110032, changeUsd: null, changePct: null, direction: 'up', alertType: 'milestone', milestoneLevel: 110000, channel: sampleChannel, compact };
   } else if (base === 'manual') {
     ctxData = { coin, price: 109842.5, direction: 'up', changePct: 1.8, stats24h: { priceChangePercent: 1.8, highPrice: 110500, lowPrice: 108200, openPrice: 108000, quoteVolume: 500000000 }, alertType: 'manual', changeSinceLastPost: 234.1, alertCountToday: 3, channel: sampleChannel };
   } else {
