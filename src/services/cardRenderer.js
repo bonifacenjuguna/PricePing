@@ -16,6 +16,13 @@ const LOGO_SIZE = 196; // was 148 — fills more of the white circle, margin sti
 const COMPACT_LOGO_CIRCLE_CY = 115;
 const COMPACT_LOGO_CIRCLE_R = 65;
 const COMPACT_LOGO_SIZE = 114;
+const COMPACT_HEIGHT = 360;
+// Telegram crops the left/right edges off very wide images in the chat-list
+// bubble preview (the full photo view is untouched). This pad keeps the
+// logo/badge/watermark clear of that crop zone by widening the canvas and
+// pushing all content inward, rather than shrinking anything.
+const COMPACT_PAD = 110;
+const COMPACT_WIDTH = CARD_WIDTH + COMPACT_PAD * 2;
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
@@ -33,7 +40,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   const nameStr = escapeXml(coin.name);
   const symbolStr = escapeXml(coin.symbol);
 
-  let badge = '';
+  let badgeInfo = null;
   const isMilestone = alertType === 'milestone';
   if (isMilestone || (!coin.isStable && direction && changePct !== null && changePct !== undefined)) {
     // Big milestones (crossing a multiple of 10x the coin's step) get a
@@ -45,8 +52,16 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
     const badgeHeight = isBigMilestone ? 84 : 72;
     const badgeFontSize = isBigMilestone ? 38 : 34;
     const badgeWidth = 60 + badgeText.length * (isBigMilestone ? 19 : 17);
-    const badgeX = CARD_WIDTH - 60 - badgeWidth;
-    badge = `
+    badgeInfo = { badgeColor, badgeText, badgeHeight, badgeFontSize, badgeWidth };
+  }
+
+  // rightMargin: distance from the canvas edge to the badge/watermark's
+  // right edge — bigger on the compact card to clear Telegram's crop zone.
+  function renderBadge(width, rightMargin) {
+    if (!badgeInfo) return '';
+    const { badgeColor, badgeText, badgeHeight, badgeFontSize, badgeWidth } = badgeInfo;
+    const badgeX = width - rightMargin - badgeWidth;
+    return `
       <rect x="${badgeX}" y="60" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="${badgeColor}" />
       <text x="${badgeX + badgeWidth / 2}" y="${60 + badgeHeight / 2 + 12}" font-family="Poppins, sans-serif"
             font-size="${badgeFontSize}" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(
@@ -54,28 +69,35 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
             )}</text>`;
   }
 
-  const watermark = `
-    <text x="${CARD_WIDTH - 40}" y="${CARD_HEIGHT - 36}" font-family="Poppins, sans-serif"
-          font-size="30" font-weight="700" fill="${textColor}" text-anchor="end"
-          opacity="0.95">@PricePing</text>`;
-
-  // Compact style: no name/symbol subtitle block, smaller canvas, price
-  // sits higher — for channels that want less visual noise per post.
-  if (compact) {
-    const compactHeight = 360;
+  function renderWatermark(width, rightMargin, y, fontSize) {
     return `
-<svg width="${CARD_WIDTH}" height="${compactHeight}" viewBox="0 0 ${CARD_WIDTH} ${compactHeight}"
+    <text x="${width - rightMargin}" y="${y}" font-family="Poppins, sans-serif"
+          font-size="${fontSize}" font-weight="700" fill="${textColor}" text-anchor="end"
+          opacity="0.95">@PricePing</text>`;
+  }
+
+  const badge = renderBadge(CARD_WIDTH, 60);
+  const watermark = renderWatermark(CARD_WIDTH, 40, CARD_HEIGHT - 36, 30);
+
+  // Compact style: no name/symbol subtitle block, wider padded canvas so
+  // Telegram's feed-preview crop lands on blank margin instead of content,
+  // price sits higher — for channels that want less visual noise per post.
+  if (compact) {
+    const logoCx = LOGO_CIRCLE_CX + COMPACT_PAD;
+    const compactBadge = renderBadge(COMPACT_WIDTH, 60 + COMPACT_PAD);
+    const compactWatermark = renderWatermark(COMPACT_WIDTH, 40 + COMPACT_PAD, COMPACT_HEIGHT - 30, 26);
+    return `
+<svg width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" viewBox="0 0 ${COMPACT_WIDTH} ${COMPACT_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
   <defs>${FONT_FACES}</defs>
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="${compactHeight}" fill="${coin.color}" />
-  <circle cx="${LOGO_CIRCLE_CX}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
-  <text x="${LOGO_CIRCLE_CX + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
+  <rect x="0" y="0" width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" fill="${coin.color}" />
+  <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
+  <text x="${logoCx + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
         font-size="52" font-weight="700" fill="${textColor}">${symbolStr}</text>
-  <text x="100" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
+  <text x="${100 + COMPACT_PAD}" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
         fill="${textColor}">${escapeXml(priceStr)}</text>
-  ${badge}
-  <text x="${CARD_WIDTH - 40}" y="${compactHeight - 30}" font-family="Poppins, sans-serif"
-        font-size="26" font-weight="700" fill="${textColor}" text-anchor="end" opacity="0.95">@PricePing</text>
+  ${compactBadge}
+  ${compactWatermark}
 </svg>`;
   }
 
@@ -200,11 +222,12 @@ async function compositeLogo(base, coin, compact) {
   if (!fs.existsSync(logoPath)) return base;
   const size = compact ? COMPACT_LOGO_SIZE : LOGO_SIZE;
   const cy = compact ? COMPACT_LOGO_CIRCLE_CY : LOGO_CIRCLE_CY;
+  const cx = compact ? LOGO_CIRCLE_CX + COMPACT_PAD : LOGO_CIRCLE_CX;
   const logoBuffer = await sharp(logoPath).resize(size, size, { fit: 'contain' }).toBuffer();
   return base.composite([
     {
       input: logoBuffer,
-      left: Math.round(LOGO_CIRCLE_CX - size / 2),
+      left: Math.round(cx - size / 2),
       top: Math.round(cy - size / 2),
     },
   ]);

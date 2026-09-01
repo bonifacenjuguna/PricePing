@@ -64,7 +64,7 @@ function channelHandle(channel) {
   if (channel && typeof channel.chatId === 'string' && channel.chatId.startsWith('@')) {
     return channel.chatId;
   }
-  return config.botName;
+  return config.botName.startsWith('@') ? config.botName : `@${config.botName}`;
 }
 
 // Builds the full variable map for one send. Every field is optional in
