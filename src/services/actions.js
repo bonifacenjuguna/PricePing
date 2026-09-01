@@ -63,7 +63,7 @@ async function postPriceUpdate(telegram, symbol, channelName) {
   return { ok: true, message: `Posted ${symbol} to #${channel.name}.` };
 }
 
-async function postChartAction(telegram, symbol, periodKey, channelName) {
+async function postChartAction(telegram, symbol, periodKey, channelName, style = 'line') {
   const coin = config.coins.find((c) => c.symbol === symbol);
   if (!coin) return { ok: false, message: `Unknown symbol: ${symbol}` };
 
@@ -86,7 +86,7 @@ async function postChartAction(telegram, symbol, periodKey, channelName) {
   }
   if (candles.length < 2) return { ok: false, message: `Not enough data to chart ${symbol} right now.` };
 
-  const buffer = await chartRenderer.renderChart({ coin, candles, periodKey });
+  const buffer = await chartRenderer.renderChart({ coin, candles, periodKey, style });
   const sent = await telegramSender.sendChart(telegram, { coin, buffer, periodLabel: preset.label }, channel);
   if (sent) recentCoins.noteCoin(symbol);
   return sent

@@ -3,6 +3,30 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.0 — Premium chart redesign, candlestick style
+
+**Added**
+- Candlestick chart style: real OHLC wicks + bodies (green/red), same
+  premium chrome as the line style. Binance klines now carry open/high/low
+  through the data layer (`binance.js`, `marketData.js`), not just close.
+- `/chart` flow (button-driven) now asks Line or Candles right after
+  picking a coin, before the period picker. `/chart SYMBOL [period]
+  [line|candle]` and `/postchart SYMBOL [period] [channel] [line|candle]`
+  take the style as an optional trailing word too.
+
+**Changed**
+- Full chart redesign — the previous version was flat and sparse
+  (gridlines + a line, nothing else). Now: brand-color-tinted diagonal
+  background gradient, a corner glow, the coin's logo composited into the
+  header (matching the alert-card treatment), vertical time-axis gridlines
+  with labels alongside the existing horizontal price gridlines, dashed
+  HIGH/LOW reference lines, a richer multi-stop area-fill gradient, a
+  double-layer glow on the line stroke, and a glowing marker dot at the
+  latest price.
+- Chart price grid now spans the period's true high/low range (previously
+  it only spanned the close-price range), so gridlines, high/low markers,
+  and the candlestick wicks all share one consistent scale.
+
 ## v0.6.8 — Detailing that actually survives compression, colon caption
 
 **Changed**

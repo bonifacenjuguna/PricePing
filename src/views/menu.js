@@ -213,19 +213,35 @@ function chartMenu(recentSymbols = []) {
   return { text, keyboard: coinGrid('chart:coin', { recentSymbols }) };
 }
 
-function chartPeriodPicker(symbol) {
-  const periods = ['1h', '24h', '7d', '30d'];
-  const buttons = periods.map((p) => ({ text: p, callback_data: `chart:period:${symbol}:${p}` }));
-  const text = `Chart period for ${symbol}?`;
-  return { text, keyboard: [...chunk(buttons, 4), ...footer('nav:chartmenu')] };
+// Asked right after picking a coin, before the period — lets the user
+// choose a clean line chart or a full candlestick chart for this render.
+function chartStylePicker(symbol) {
+  const buttons = [
+    { text: '\uD83D\uDCC8 Line', callback_data: `chart:style:${symbol}:line` },
+    { text: '\uD83D\uDD6F\uFE0F Candles', callback_data: `chart:style:${symbol}:candle` },
+  ];
+  const text = `${symbol} chart \u2014 line or candlesticks?`;
+  return { text, keyboard: [buttons, ...footer('nav:chartmenu')] };
 }
 
-function chartChannelPicker(symbol, period, channels) {
-  const text = `Post ${symbol} (${period}) chart to which channel?\n(Or send to yourself only \u2014 "Preview".)`;
-  const extra = [[{ text: '\uD83D\uDC41 Preview to me', callback_data: `chart:preview:${symbol}:${period}` }]];
+function chartPeriodPicker(symbol, style = 'line') {
+  const periods = ['1h', '24h', '7d', '30d'];
+  const buttons = periods.map((p) => ({ text: p, callback_data: `chart:period:${symbol}:${p}:${style}` }));
+  const styleLabel = style === 'candle' ? 'Candlestick' : 'Line';
+  const text = `${styleLabel} chart period for ${symbol}?`;
+  return { text, keyboard: [...chunk(buttons, 4), ...footer(`chart:coin:${symbol}`)] };
+}
+
+function chartChannelPicker(symbol, period, style, channels) {
+  const styleLabel = style === 'candle' ? 'candlestick' : 'line';
+  const text = `Post ${symbol} (${period}, ${styleLabel}) chart to which channel?\n(Or send to yourself only \u2014 "Preview".)`;
+  const extra = [[{ text: '\uD83D\uDC41 Preview to me', callback_data: `chart:preview:${symbol}:${period}:${style}` }]];
   return {
     text,
-    keyboard: channelPicker(`chart:send:${symbol}:${period}`, channels, [...extra, backRow(`chart:coin:${symbol}`)]),
+    keyboard: channelPicker(`chart:send:${symbol}:${period}:${style}`, channels, [
+      ...extra,
+      backRow(`chart:style:${symbol}:${style}`),
+    ]),
   };
 }
 
@@ -768,6 +784,7 @@ module.exports = {
   postMenu,
   postChannelPicker,
   chartMenu,
+  chartStylePicker,
   chartPeriodPicker,
   chartChannelPicker,
   thresholds,

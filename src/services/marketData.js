@@ -81,7 +81,15 @@ async function fetchKlinesForSymbol(symbol, interval, limit) {
 
   if (coin.impliedFromInverse) {
     const candles = await binance.fetchKlines(coin.impliedFromInverse, interval, limit);
-    return candles.map((c) => ({ openTime: c.openTime, close: 1 / c.close }));
+    // 1/x is a decreasing function, so inverting swaps which side is the
+    // "high" and which is the "low" for each candle.
+    return candles.map((c) => ({
+      openTime: c.openTime,
+      open: 1 / c.open,
+      close: 1 / c.close,
+      high: 1 / c.low,
+      low: 1 / c.high,
+    }));
   }
 
   return [];

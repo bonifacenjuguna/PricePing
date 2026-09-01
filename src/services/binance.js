@@ -119,8 +119,14 @@ async function fetchKlines(pair, interval, limit) {
     if (!Array.isArray(data)) throw new Error('Unexpected Binance klines response shape (expected array)');
 
     return data
-      .map((row) => ({ openTime: row[0], close: Number(row[4]) }))
-      .filter((row) => Number.isFinite(row.close));
+      .map((row) => ({
+        openTime: row[0],
+        open: Number(row[1]),
+        high: Number(row[2]),
+        low: Number(row[3]),
+        close: Number(row[4]),
+      }))
+      .filter((row) => Number.isFinite(row.close) && Number.isFinite(row.open) && Number.isFinite(row.high) && Number.isFinite(row.low));
   } finally {
     clear();
   }

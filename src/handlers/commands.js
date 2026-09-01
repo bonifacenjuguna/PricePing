@@ -60,8 +60,8 @@ async function help(ctx) {
       `/status \u2014 bot status, uptime, heartbeat\n` +
       `/prices \u2014 current price for all coins\n` +
       `/post SYMBOL [channel] \u2014 post a price update now\n` +
-      `/chart SYMBOL [1h|24h|7d|30d] \u2014 send yourself a chart\n` +
-      `/postchart SYMBOL [period] [channel] \u2014 post a chart to a channel\n` +
+      `/chart SYMBOL [1h|24h|7d|30d] [line|candle] \u2014 send yourself a chart\n` +
+      `/postchart SYMBOL [period] [channel] [line|candle] \u2014 post a chart to a channel\n` +
       `/thresholds \u2014 view thresholds\n` +
       `/setthreshold SYMBOL AMOUNT [pct] \u2014 change a threshold\n` +
       `/milestones \u2014 view milestone steps \u00B7 /setmilestone SYMBOL STEP|off\n` +
@@ -654,23 +654,26 @@ async function manualPost(ctx, symbol) {
 async function chartMenuScreen(ctx) {
   await inlineEdit(ctx, menu.chartMenu(recentCoins.getRecent()));
 }
-async function chartPeriodScreen(ctx, symbol) {
-  await inlineEdit(ctx, menu.chartPeriodPicker(symbol));
+async function chartStyleScreen(ctx, symbol) {
+  await inlineEdit(ctx, menu.chartStylePicker(symbol));
 }
-async function chartChannelScreen(ctx, symbol, period) {
+async function chartPeriodScreen(ctx, symbol, style) {
+  await inlineEdit(ctx, menu.chartPeriodPicker(symbol, style));
+}
+async function chartChannelScreen(ctx, symbol, period, style) {
   const channels = await channelsDb.getAll();
-  await inlineEdit(ctx, menu.chartChannelPicker(symbol, period, channels));
+  await inlineEdit(ctx, menu.chartChannelPicker(symbol, period, style, channels));
 }
-async function chartSendExecute(ctx, symbol, period, channelName) {
+async function chartSendExecute(ctx, symbol, period, style, channelName) {
   await ctx.answerCbQuery('Posting chart...');
-  const result = await actions.postChartAction(ctx.telegram, symbol, period, channelName);
+  const result = await actions.postChartAction(ctx.telegram, symbol, period, channelName, style);
   await ctx.reply(result.message);
 }
-async function chartPreviewExecute(ctx, symbol, period) {
+async function chartPreviewExecute(ctx, symbol, period, style) {
   await ctx.answerCbQuery('Rendering...');
-  await sendChartPreview(ctx, symbol, period);
+  await sendChartPreview(ctx, symbol, period, style);
 }
-async function sendChartPreview(ctx, symbol, periodKey) {
+async function sendChartPreview(ctx, symbol, periodKey, style = 'line') {
   const coin = findCoin(symbol);
   const preset = chartRenderer.PERIOD_PRESETS[periodKey];
   if (!coin || !preset) {
@@ -688,8 +691,8 @@ async function sendChartPreview(ctx, symbol, periodKey) {
     await ctx.reply(`Not enough data to chart ${symbol}.`);
     return;
   }
-  const buffer = await chartRenderer.renderChart({ coin, candles, periodKey });
-  await ctx.replyWithPhoto(Input.fromBuffer(buffer, `${symbol}-${periodKey}.png`), {
+  const buffer = await chartRenderer.renderChart({ coin, candles, periodKey, style });
+  await ctx.replyWithPhoto(Input.fromBuffer(buffer, `${symbol}-${periodKey}-${style}.png`), {
     caption: `${coin.name} (${coin.symbol}) \u2014 ${preset.label}`,
   });
 }
@@ -697,22 +700,28 @@ async function chartCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
   const periodKey = (parts[2] || '24h').toLowerCase();
+  const styleArg = (parts[3] || 'line').toLowerCase();
+  const style = chartRenderer.CHART_STYLES[styleArg] ? styleArg : 'line';
   if (!findCoin(symbol)) {
-    await ctx.reply(`Usage: /chart SYMBOL [1h|24h|7d|30d]\nKnown symbols: ${config.coins.map((c) => c.symbol).join(', ')}`);
+    await ctx.reply(
+      `Usage: /chart SYMBOL [1h|24h|7d|30d] [line|candle]\nKnown symbols: ${config.coins.map((c) => c.symbol).join(', ')}`
+    );
     return;
   }
-  await sendChartPreview(ctx, symbol, periodKey);
+  await sendChartPreview(ctx, symbol, periodKey, style);
 }
 async function postChartCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const symbol = (parts[1] || '').toUpperCase();
   const periodKey = (parts[2] || '24h').toLowerCase();
+  const styleArg = (parts[4] || '').toLowerCase();
+  const style = chartRenderer.CHART_STYLES[styleArg] ? styleArg : 'line';
   const channelName = parts[3];
   if (!findCoin(symbol)) {
-    await ctx.reply(`Usage: /postchart SYMBOL [period] [channel]`);
+    await ctx.reply(`Usage: /postchart SYMBOL [period] [channel] [line|candle]`);
     return;
   }
-  const result = await actions.postChartAction(ctx.telegram, symbol, periodKey, channelName);
+  const result = await actions.postChartAction(ctx.telegram, symbol, periodKey, channelName, style);
   await ctx.reply(result.message);
 }
 
@@ -2139,6 +2148,7 @@ module.exports = {
   postCmd,
   manualPost,
   chartMenuScreen,
+  chartStyleScreen,
   chartPeriodScreen,
   chartChannelScreen,
   chartSendExecute,

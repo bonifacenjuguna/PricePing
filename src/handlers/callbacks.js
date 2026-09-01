@@ -10,7 +10,7 @@ async function onCallback(ctx) {
   if (!data) return undefined;
 
   const parts = data.split(':');
-  const [ns, a1, a2, a3, a4] = parts;
+  const [ns, a1, a2, a3, a4, a5] = parts;
 
   try {
     // ---- nav: screen navigation ----
@@ -199,22 +199,26 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- chart:coin | chart:period | chart:send | chart:preview ----
+    // ---- chart:coin | chart:style | chart:period | chart:send | chart:preview ----
     if (ns === 'chart') {
       if (a1 === 'coin') {
         await ctx.answerCbQuery();
         recentCoins.noteCoin(a2);
-        return commands.chartPeriodScreen(ctx, a2);
+        return commands.chartStyleScreen(ctx, a2);
+      }
+      if (a1 === 'style') {
+        await ctx.answerCbQuery();
+        return commands.chartPeriodScreen(ctx, a2, a3);
       }
       if (a1 === 'period') {
         await ctx.answerCbQuery();
-        return commands.chartChannelScreen(ctx, a2, a3);
+        return commands.chartChannelScreen(ctx, a2, a3, a4);
       }
       if (a1 === 'send') {
-        return commands.chartSendExecute(ctx, a2, a3, a4);
+        return commands.chartSendExecute(ctx, a2, a3, a4, a5);
       }
       if (a1 === 'preview') {
-        return commands.chartPreviewExecute(ctx, a2, a3);
+        return commands.chartPreviewExecute(ctx, a2, a3, a4);
       }
       return undefined;
     }
