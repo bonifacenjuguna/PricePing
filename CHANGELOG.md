@@ -3,6 +3,25 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.3 — Coin tags, movers summary, bulk actions
+
+**Added**
+- Coin tags/groups: `/tag SYMBOL TAG`, `/untag SYMBOL TAG`, `/tags`, plus a
+  button flow (Automation \u2192 Tags). Freeform labels (e.g. "layer1",
+  "meme"), works for both built-in and custom-added coins. New
+  `coin_tags` table (migration `008_v0_7_3.sql`).
+- `/movers [tag:NAME]`: top gainers/losers (24h) across every tracked
+  coin, or scoped to one tag. Also reachable via Automation \u2192 Movers.
+  Reuses the same 24hr-stats batch the digest already fetches.
+- Bulk actions (Automation \u2192 Bulk actions): apply a threshold or a
+  mute to every coin in a scope \u2014 all coins, or one tag \u2014 in a
+  single pass instead of one at a time.
+
+**Migration note:** run `npm run migrate` after deploying \u2014 adds
+`coin_tags` (new table, doesn't touch existing ones).
+
+---
+
 ## v0.7.2 — Button-driven rule wizard, richer automation
 
 **Added**

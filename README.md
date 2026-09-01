@@ -139,6 +139,16 @@ then executes on send; typing `/cancel` at that prompt backs out cleanly.
 - **Rule action: mute another coin** — a rule can mute a *different* coin
   for a set duration when it fires (e.g. "BTC drops 5%+ \u2192 mute ETH for
   1h" to cut noise during a correlated move).
+- **Coin tags/groups** — `/tag BTC layer1` (or the button flow: Automation
+  \u2192 Tags \u2192 Tag a coin) groups coins under a freeform label. Works
+  for both built-in and custom-added coins. `/tags` lists every tag and how
+  many coins are in it; `/untag SYMBOL TAG` removes one.
+- **Movers summary** — `/movers` shows top gainers/losers (24h) across
+  every tracked coin; `/movers tag:defi` scopes it to one tag. Also
+  reachable via Automation \u2192 Movers.
+- **Bulk actions** — Automation \u2192 Bulk actions applies a threshold or
+  a mute to every coin in a scope (all coins, or one tag) in a single
+  pass instead of one at a time.
 - **Button-driven rule builder** — `/commands \u2192 Automation \u2192 Rules
   \u2192 Add rule` walks through trigger type, coin, direction, minimum
   move, action, and action-specific params (channel, chart period, mute
@@ -249,7 +259,7 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required) `/history SYMBOL [channel]` |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
-| Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` |
+| Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/movers [tag:NAME]` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |
 | Broadcast | `/broadcast CHANNEL message text` |
 | Backup | `/exportconfig` `/importconfig` |
 | Reset | `/reset [thresholds\|milestones\|cooldowns\|captions\|vars\|channels\|automation\|everything]` |

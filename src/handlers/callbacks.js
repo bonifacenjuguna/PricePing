@@ -55,6 +55,10 @@ async function onCallback(ctx) {
           return commands.schedulesScreen(ctx);
         case 'rules':
           return commands.rulesScreen(ctx);
+        case 'movers':
+          return commands.moversScreen(ctx);
+        case 'tags':
+          return commands.tagsScreen(ctx);
         case 'coinsettings':
           return commands.coinSettingsMenuScreen(ctx);
         case 'milestones':
@@ -377,7 +381,29 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- rulewiz: multi-step button wizard for building a rule ----
+    // ---- tag:view|addstart|addcoin ----
+    if (ns === 'tag') {
+      if (a1 === 'view') return commands.tagDetailScreen(ctx, a2);
+      if (a1 === 'addstart') return commands.tagAddStart(ctx);
+      if (a1 === 'addcoin') return commands.tagAddPickCoin(ctx, a2);
+      return undefined;
+    }
+
+    // ---- bulk: multi-step wizard for applying a threshold/mute to many
+    // coins at once (all coins, or everything under a tag) ----
+    if (ns === 'bulk') {
+      if (a1 === 'start') return commands.bulkStart(ctx);
+      if (a1 === 'act') return commands.bulkPickAction(ctx, a2);
+      if (a1 === 'scope') {
+        // scope arg is either "all" or "tag:<name>" — a2 only captures the
+        // first colon-split segment, so reconstruct from the raw data.
+        const scopeArg = data.split(':').slice(2).join(':');
+        return commands.bulkPickScope(ctx, scopeArg);
+      }
+      if (a1 === 'mutedur') return commands.bulkPickMuteDuration(ctx, a2);
+      if (a1 === 'cancel') return commands.bulkCancel(ctx);
+      return undefined;
+    }
     // (see wizardState.js — accumulated choices live there, not in
     // callback_data, so each step here only ever carries one short value)
     if (ns === 'rulewiz') {

@@ -380,11 +380,16 @@ function pauseMenu({ paused, pausedUntil }) {
 
 // ---------- Automation ----------
 function automationHub() {
-  const text = 'Automation \u2014 recurring posts/charts/digests and trigger\u2192action rules.';
+  const text = 'Automation \u2014 recurring posts/charts/digests, trigger\u2192action rules, and bulk/group tools.';
   const keyboard = [
     [{ text: '\uD83D\uDCC5 Schedules', callback_data: 'nav:schedules' }],
     [{ text: '\u26A1 Rules', callback_data: 'nav:rules' }],
     [{ text: '\uD83D\uDCCA Send digest now', callback_data: 'digest:now' }],
+    [{ text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' }],
+    [
+      { text: '\uD83E\uDDF0 Bulk actions', callback_data: 'bulk:start' },
+      { text: '\uD83C\uDFF7 Tags', callback_data: 'nav:tags' },
+    ],
     ...footer('nav:hub'),
   ];
   return { text, keyboard };
@@ -544,6 +549,64 @@ function ruleWizardConfirm(s) {
     ],
   ];
   return { text, keyboard };
+}
+
+// ---------- Coin tags/groups ----------
+function tagsList(tags) {
+  const text = tags.length
+    ? `Tags\n${tags.map((t) => `#${t.tag} \u2014 ${t.coinCount} coin(s)`).join('\n')}`
+    : 'No tags yet. Tag a coin to create one (e.g. /tag BTC layer1), or use the button below.';
+  const tagRows = chunk(
+    tags.map((t) => ({ text: `#${t.tag}`, callback_data: `tag:view:${t.tag}` })),
+    2
+  );
+  const keyboard = [...tagRows, [{ text: '\u2795 Tag a coin', callback_data: 'tag:addstart' }], HOME_ROW];
+  return { text, keyboard };
+}
+
+function tagDetail(tag, symbols) {
+  const text = symbols.length ? `#${tag}\n${symbols.join(', ')}` : `#${tag} has no coins (all untagged from it).`;
+  const keyboard = [[{ text: '\u2795 Tag a coin', callback_data: 'tag:addstart' }], ...footer('nav:tags')];
+  return { text, keyboard };
+}
+
+function tagAddCoinPicker() {
+  const text = 'Which coin do you want to tag?';
+  return { text, keyboard: coinGrid('tag:addcoin', { parentCallback: 'nav:tags' }) };
+}
+
+// ---------- Bulk actions ----------
+function bulkWizardSummary(s) {
+  const bits = [];
+  if (s.actionType) bits.push(`Action: ${s.actionType === 'threshold' ? 'Set threshold' : 'Mute'}`);
+  if (s.scope) bits.push(`Scope: ${s.scope === 'all' ? 'all coins' : `#${s.scope.tag}`}`);
+  return bits.join(' \u00B7 ');
+}
+
+function bulkWizardAction() {
+  const text = 'Bulk actions \u2014 what do you want to apply to a group of coins at once?';
+  const keyboard = [
+    [{ text: '\uD83C\uDFAF Set threshold', callback_data: 'bulk:act:threshold' }],
+    [{ text: '\uD83D\uDD07 Mute', callback_data: 'bulk:act:mute' }],
+    ...footer('nav:automation'),
+  ];
+  return { text, keyboard };
+}
+
+function bulkWizardScope(s, tags) {
+  const text = `${bulkWizardSummary(s)}\n\nApply to which coins?`;
+  const tagButtons = tags.map((t) => ({ text: `#${t.tag} (${t.coinCount})`, callback_data: `bulk:scope:tag:${t.tag}` }));
+  const keyboard = [
+    [{ text: '\uD83C\uDF10 All coins', callback_data: 'bulk:scope:all' }],
+    ...chunk(tagButtons, 2),
+    ...footer('nav:automation'),
+  ];
+  return { text, keyboard };
+}
+
+function bulkWizardMuteDuration(s) {
+  const text = `${bulkWizardSummary(s)}\n\nMute for how long?`;
+  return { text, keyboard: durationPicker('bulk:mutedur', [backRow('nav:automation')]) };
 }
 
 // ---------- Channels ----------
@@ -919,6 +982,13 @@ module.exports = {
   ruleWizardMuteCoin,
   ruleWizardMuteDuration,
   ruleWizardConfirm,
+  tagsList,
+  tagDetail,
+  tagAddCoinPicker,
+  bulkWizardAction,
+  bulkWizardScope,
+  bulkWizardMuteDuration,
+  bulkWizardSummary,
   channelList,
   channelTypePicker,
   channelTypeDefaultPicker,

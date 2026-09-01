@@ -14,6 +14,7 @@ const templatesDb = require('../db/templates');
 const customVarsDb = require('../db/customVars');
 const schedulesDb = require('../db/schedules');
 const rulesDb = require('../db/rules');
+const coinTagsDb = require('../db/coinTags');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
 
@@ -76,6 +77,7 @@ async function help(ctx) {
       `/setcaption TYPE[:SYMBOL] <template> \u00B7 /previewcaption TYPE[:SYMBOL] \u00B7 /resetcaption TYPE[:SYMBOL]\n` +
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
       `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules \u2014 or build a rule with buttons via /commands \u2192 Automation \u2192 Rules \u2192 Add rule\n` +
+      `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk threshold/mute via /commands \u2192 Automation \u2192 Bulk actions\n` +
       `/broadcast CHANNEL message... \u2014 plain text post\n` +
       `/exportconfig \u00B7 /importconfig\n` +
       `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
@@ -1899,6 +1901,247 @@ async function digestNowButton(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Movers — top gainers/losers across tracked coins (optionally scoped to a
+// tag). Reuses the same 24hr stats batch the digest uses.
+// ---------------------------------------------------------------------------
+async function runMovers(ctx, tagArg) {
+  let symbols = config.coins.map((c) => c.symbol);
+  let scopeLabel = 'all tracked coins';
+  if (tagArg) {
+    symbols = await coinTagsDb.getSymbolsForTag(tagArg);
+    scopeLabel = `#${tagArg}`;
+    if (!symbols.length) {
+      await ctx.reply(`No coins tagged "${tagArg}". /tags to see what exists.`);
+      return;
+    }
+  }
+
+  let priceMap;
+  let statsMap;
+  try {
+    [priceMap, statsMap] = await Promise.all([marketData.fetchAllPrices(), marketData.fetchAll24hrStats()]);
+  } catch {
+    await ctx.reply('Could not reach Binance right now \u2014 try again shortly.');
+    return;
+  }
+
+  const rows = symbols
+    .map((symbol) => {
+      const coin = findCoin(symbol);
+      const stats = statsMap.get(symbol);
+      const price = priceMap.get(symbol);
+      if (!coin || coin.isStable || !stats || price === undefined) return null;
+      return { symbol, pct: stats.priceChangePercent, price };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.pct - a.pct);
+
+  if (!rows.length) {
+    await ctx.reply('No movers data available right now (need at least one non-stable tracked coin with 24h stats).');
+    return;
+  }
+
+  const line = (r) =>
+    `${r.symbol.padEnd(5, ' ')} ${r.pct >= 0 ? '\u25B2' : '\u25BC'} ${format.formatPct(r.pct)}  $${format.formatPrice(r.price)}`;
+  const gainers = rows.filter((r) => r.pct >= 0).slice(0, 5);
+  const losers = rows
+    .filter((r) => r.pct < 0)
+    .slice(-5)
+    .reverse();
+
+  const text =
+    `\uD83D\uDCCA <b>Movers</b> \u2014 24h \u00B7 ${scopeLabel}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `\uD83D\uDFE2 Gainers\n${gainers.length ? gainers.map(line).join('\n') : '(none)'}\n\n` +
+    `\uD83D\uDD34 Losers\n${losers.length ? losers.map(line).join('\n') : '(none)'}`;
+  await ctx.reply(text, { parse_mode: 'HTML' });
+}
+async function moversCmd(ctx) {
+  const argRaw = (ctx.message.text.split(/\s+/)[1] || '').trim();
+  const tagArg = argRaw.toLowerCase().startsWith('tag:') ? argRaw.slice(4).toLowerCase() : null;
+  await runMovers(ctx, tagArg);
+}
+async function moversScreen(ctx) {
+  await ctx.answerCbQuery();
+  await runMovers(ctx, null);
+}
+
+// ---------------------------------------------------------------------------
+// Coin tags/groups — /tag, /untag, /tags. Freeform strings (e.g. "defi",
+// "meme"), consumed by /movers and the bulk-action wizard as a scope.
+// Sanitized to alphanumeric/dash only since a raw colon would break the
+// button screens' callback_data parsing (tag:view:<tag>, bulk:scope:tag:<tag>).
+// ---------------------------------------------------------------------------
+function sanitizeTag(raw) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
+}
+async function tagCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const symbol = (parts[1] || '').toUpperCase();
+  const tag = sanitizeTag(parts[2] || '');
+  const coin = findCoin(symbol);
+  if (!coin || !tag) {
+    await ctx.reply('Usage: /tag SYMBOL TAGNAME  (e.g. /tag BTC layer1)');
+    return;
+  }
+  await coinTagsDb.add(symbol, tag);
+  await ctx.reply(`Tagged ${symbol} #${tag}.`);
+}
+async function untagCmd(ctx) {
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const symbol = (parts[1] || '').toUpperCase();
+  const tag = sanitizeTag(parts[2] || '');
+  const coin = findCoin(symbol);
+  if (!coin || !tag) {
+    await ctx.reply('Usage: /untag SYMBOL TAGNAME');
+    return;
+  }
+  await coinTagsDb.remove(symbol, tag);
+  await ctx.reply(`Removed #${tag} from ${symbol}.`);
+}
+async function tagsCmd(ctx) {
+  await tagsScreen(ctx, true);
+}
+async function tagsScreen(ctx, isReply = false) {
+  const tags = await coinTagsDb.allTags();
+  const screen = menu.tagsList(tags);
+  if (isReply) await inlineReply(ctx, screen);
+  else await inlineEdit(ctx, screen);
+}
+async function tagDetailScreen(ctx, tag) {
+  await ctx.answerCbQuery();
+  const symbols = await coinTagsDb.getSymbolsForTag(tag);
+  await inlineEdit(ctx, menu.tagDetail(tag, symbols));
+}
+async function tagAddStart(ctx) {
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.tagAddCoinPicker());
+}
+async function tagAddPickCoin(ctx, symbol) {
+  await ctx.answerCbQuery();
+  const prompt = `Send the tag name to add to ${symbol} (e.g. "defi" or "layer1").`;
+  pendingInput.set('addtag', { symbol }, prompt);
+  await ctx.reply(prompt);
+}
+async function runAddTag(ctx, symbol, text) {
+  const tag = sanitizeTag(text);
+  if (!tag) {
+    await ctx.reply('Tag name cannot be empty (letters, numbers, and dashes only).');
+    return;
+  }
+  await coinTagsDb.add(symbol, tag);
+  await ctx.reply(`Tagged ${symbol} #${tag}.`);
+  await tagsScreen(ctx, true);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk actions — apply a threshold or mute to every coin in a scope (all
+// coins, or a tag) in one go, instead of one-at-a-time. Button wizard uses
+// wizardState (kind 'bulk'); state shape: { actionType, scope: 'all' |
+// { tag } }.
+// ---------------------------------------------------------------------------
+async function resolveBulkTargets(scope) {
+  if (scope === 'all') return config.coins.map((c) => c.symbol);
+  if (scope && scope.tag) return coinTagsDb.getSymbolsForTag(scope.tag);
+  return [];
+}
+function scopeLabel(scope) {
+  return scope === 'all' ? 'all coins' : scope && scope.tag ? `#${scope.tag}` : 'nothing';
+}
+
+async function bulkStart(ctx) {
+  wizardState.start('bulk', {});
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.bulkWizardAction());
+}
+async function bulkPickAction(ctx, actionType) {
+  const s = wizardState.update('bulk', { actionType });
+  if (!s) return bulkWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  const tags = await coinTagsDb.allTags();
+  await inlineEdit(ctx, menu.bulkWizardScope(s, tags));
+}
+async function bulkPickScope(ctx, scopeArg) {
+  const scope = scopeArg === 'all' ? 'all' : { tag: scopeArg.replace(/^tag:/, '') };
+  const s = wizardState.update('bulk', { scope });
+  if (!s) return bulkWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  if (s.actionType === 'mute') {
+    await inlineEdit(ctx, menu.bulkWizardMuteDuration(s));
+    return;
+  }
+  const prompt = `Send the threshold value to apply to ${scopeLabel(s.scope)} (e.g. 400 or 2%).`;
+  pendingInput.set('bulkwiz_threshold', {}, prompt);
+  await ctx.reply(`${menu.bulkWizardSummary(s)}\n\n${prompt}`);
+}
+async function bulkWizardExpired(ctx) {
+  await ctx.answerCbQuery('That flow expired \u2014 start again with Bulk actions.');
+}
+async function bulkResumeAfterThresholdText(ctx, text) {
+  const s = wizardState.get('bulk');
+  if (!s) {
+    await ctx.reply('That flow expired \u2014 open Automation \u2192 Bulk actions to start again.');
+    return;
+  }
+  let amountRaw = text.trim();
+  let type = 'usd';
+  if (amountRaw.endsWith('%')) {
+    type = 'pct';
+    amountRaw = amountRaw.slice(0, -1);
+  } else if (/\bpct\b/i.test(amountRaw)) {
+    type = 'pct';
+    amountRaw = amountRaw.replace(/pct/i, '').trim();
+  }
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    await ctx.reply("That doesn't look like a valid amount. Send e.g. 400 or 2%.");
+    return;
+  }
+  const targets = await resolveBulkTargets(s.scope);
+  for (const symbol of targets) {
+    await thresholdsDb.set(symbol, amount, type);
+  }
+  wizardState.clear();
+  const displayAmount = type === 'pct' ? `${amount}%` : `$${amount}`;
+  await ctx.reply(
+    targets.length
+      ? `Threshold set to ${displayAmount} for ${targets.length} coin(s): ${targets.join(', ')}.`
+      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
+  );
+}
+async function bulkPickMuteDuration(ctx, code) {
+  const s = wizardState.get('bulk');
+  if (!s) return bulkWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  const durationMinutesMap = { '30m': 30, '1h': 60, '4h': 240, '1d': 1440, indef: 10 * 365 * 24 * 60 };
+  const minutes = durationMinutesMap[code] || 60;
+  const targets = await resolveBulkTargets(s.scope);
+  const until = new Date(Date.now() + minutes * 60000);
+  for (const symbol of targets) {
+    await coinStateDb.setMuteUntil(symbol, until);
+  }
+  wizardState.clear();
+  await ctx.editMessageText(
+    targets.length
+      ? `Muted ${targets.length} coin(s) for ${code}: ${targets.join(', ')}.`
+      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
+  ).catch(() =>
+    ctx.reply(
+      targets.length
+        ? `Muted ${targets.length} coin(s) for ${code}: ${targets.join(', ')}.`
+        : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
+    )
+  );
+}
+async function bulkCancel(ctx) {
+  wizardState.clear();
+  await ctx.answerCbQuery('Cancelled');
+}
+
+// ---------------------------------------------------------------------------
 // Advanced /test
 // ---------------------------------------------------------------------------
 async function testAlert(ctx) {
@@ -2226,6 +2469,8 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'editrule') return runAddRule(ctx, text, pending.context.id);
   if (pending.action === 'rulewiz_custommin') return ruleWizardResumeAfterCustomMin(ctx, text);
   if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
+  if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
+  if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
@@ -2360,6 +2605,20 @@ module.exports = {
   ruleWizardPickMuteDuration,
   ruleWizardConfirmExecute,
   ruleWizardCancel,
+  moversCmd,
+  moversScreen,
+  tagCmd,
+  untagCmd,
+  tagsCmd,
+  tagsScreen,
+  tagDetailScreen,
+  tagAddStart,
+  tagAddPickCoin,
+  bulkStart,
+  bulkPickAction,
+  bulkPickScope,
+  bulkPickMuteDuration,
+  bulkCancel,
   ruleCmd,
   ruleDel,
   ruleEditStart,
