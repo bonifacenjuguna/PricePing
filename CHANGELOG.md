@@ -3,6 +3,20 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.8 — Detailing that actually survives compression, colon caption
+
+**Changed**
+- The v0.6.7 gradient/shadow/glow effect was too subtle to survive
+  Telegram's shrink-to-thumbnail + JPEG re-encode — it looked right at
+  100% but flattened out at the size people actually see it. Pushed the
+  gradient contrast and shadow strength up substantially, and added a
+  corner vignette (all card types + chart) so the depth reads at a
+  glance even after compression, not just on close inspection.
+- Caption separator changed from an em dash to a colon —
+  `Name: $price @PricePing` — since a colon reads as "label: value",
+  which is literally what this is, instead of an arbitrary symbol
+  between two chunks of text.
+
 ## v0.6.7 — Card detailing: gradient background, shadows, glow
 
 **Changed**

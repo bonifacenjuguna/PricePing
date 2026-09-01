@@ -129,8 +129,8 @@ async function renderChart({ coin, candles, periodKey }) {
       <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" rx="28" />
     </clipPath>
     <linearGradient id="chartBgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#191D25" />
-      <stop offset="100%" stop-color="#0A0C10" />
+      <stop offset="0%" stop-color="#20242E" />
+      <stop offset="100%" stop-color="#06070A" />
     </linearGradient>
     <filter id="lineGlow" x="-50%" y="-50%" width="200%" height="200%">
       <feGaussianBlur stdDeviation="7" />

@@ -34,6 +34,10 @@ function mutedVariant(hex, textColor) {
 // Blends a hex color toward white (amt > 0) or black (amt < 0). amt is
 // 0..1. Used for the card background gradient — a same-hue lighter/darker
 // pair reads as "premium depth" without introducing a second brand color.
+// NOTE: keep this contrast strong (0.2+) — a subtle single-digit-percent
+// shift on an already-saturated brand color gets flattened by Telegram's
+// JPEG re-encode and a small chat-thumbnail display size; it needs to
+// survive being shrunk on a phone screen, not just look right at 100%.
 function clamp(v) {
   return Math.max(0, Math.min(255, v));
 }

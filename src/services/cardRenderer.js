@@ -43,29 +43,43 @@ const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
 
 // Shared "detailing" defs: a diagonal same-hue gradient (depth, without a
-// second brand color), a soft radial glow to sit behind the logo, and two
-// drop-shadow filters (one for large flat shapes like the logo disc, a
-// lighter one for text/badges). Deliberately NOT using a noise/grain
-// texture here — fine per-pixel grain compresses terribly under Telegram's
-// forced JPEG re-encode (it either gets smoothed away or turns into
-// blocky mosquito-noise artifacts), so it would undo the sharpness work.
-// Smooth gradients and blurred shadows compress cleanly by comparison.
+// second brand color), a corner vignette, a soft radial glow to sit behind
+// the logo, and two drop-shadow filters (one for large flat shapes like
+// the logo disc, a lighter one for text/badges). Deliberately NOT using a
+// noise/grain texture here — fine per-pixel grain compresses terribly
+// under Telegram's forced JPEG re-encode (it either gets smoothed away or
+// turns into blocky mosquito-noise artifacts), so it would undo the
+// sharpness work. Smooth gradients, a vignette, and blurred shadows
+// compress cleanly by comparison — and the contrast on all of them is
+// deliberately pushed strong, because anything subtle disappears once
+// this gets shrunk to a phone chat-bubble thumbnail.
 function buildDetailDefs(coin) {
   return `
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${shade(coin.color, 0.13)}" />
-      <stop offset="100%" stop-color="${shade(coin.color, -0.17)}" />
+      <stop offset="0%" stop-color="${shade(coin.color, 0.24)}" />
+      <stop offset="100%" stop-color="${shade(coin.color, -0.34)}" />
     </linearGradient>
+    <radialGradient id="vignette" cx="50%" cy="42%" r="75%">
+      <stop offset="55%" stop-color="#000000" stop-opacity="0" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.4" />
+    </radialGradient>
     <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.4" />
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55" />
       <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
     </radialGradient>
     <filter id="shapeShadow" x="-60%" y="-60%" width="220%" height="220%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.22" />
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35" />
     </filter>
     <filter id="textShadow" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.16" />
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.3" />
     </filter>`;
+}
+
+// Full-canvas vignette rect — always the last thing painted before content
+// so corners/edges read as receding, which is what actually reads as
+// "depth" at a glance rather than needing to inspect the gradient closely.
+function buildVignette(width, height) {
+  return `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#vignette)" />`;
 }
 
 // Soft glow sitting behind the white logo disc — cx/cy/r in the same
@@ -138,6 +152,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
      xmlns="http://www.w3.org/2000/svg">
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
   <rect x="0" y="0" width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildVignette(COMPACT_WIDTH, COMPACT_HEIGHT)}
   ${buildLogoGlow(logoCx, COMPACT_LOGO_CIRCLE_CY, COMPACT_LOGO_CIRCLE_R)}
   <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
   <text x="${logoCx + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
@@ -155,6 +170,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
   <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildVignette(CARD_WIDTH, CARD_HEIGHT)}
 
   <!-- logo backing circle (logo PNG composited on top of this at render time) -->
   ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
@@ -249,6 +265,7 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
   <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildVignette(CARD_WIDTH, CARD_HEIGHT)}
   ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
   <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
 

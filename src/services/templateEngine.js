@@ -7,11 +7,14 @@ const customVarsDb = require('../db/customVars');
 // that alert type (see /setcaption, /resetcaption). Written using only
 // variables documented in VARIABLE_DOCS below, so "what would the default
 // look like" and "what variables exist" always stay in sync.
+// A colon reads as "label: value" (Name: price), which is what this
+// actually is — clearer than an em dash sitting between two unrelated-
+// looking chunks of text.
 const DEFAULT_TEMPLATES = {
-  threshold: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
-  milestone: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
-  manual: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
-  chart: '<b>{name}</b> \u2014 {period_label}\u00A0{channel_handle}',
+  threshold: '<b>{name}</b>: ${price}\u00A0{channel_handle}',
+  milestone: '<b>{name}</b>: ${price}\u00A0{channel_handle}',
+  manual: '<b>{name}</b>: ${price}\u00A0{channel_handle}',
+  chart: '<b>{name}</b>: {period_label}\u00A0{channel_handle}',
 };
 
 // Documentation shown by /variables — grouped by where each one is
