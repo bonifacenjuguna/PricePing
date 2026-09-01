@@ -3,6 +3,23 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.1 — Card background depth, logo medallion
+
+**Changed**
+- Threshold/milestone/compact/manual-post card backgrounds were still a
+  flat two-stop diagonal gradient — the logo disc had gotten the detailing
+  pass, the panel behind it hadn't. Added a bright corner glow (top-right),
+  a darker brand-tinted "blob" pooling in the opposite corner, and a very
+  faint diagonal sheen band across the whole card — same "glass panel"
+  depth treatment as premium fintech card UI, built entirely from smooth
+  gradients (no blur filters, no noise) so it survives Telegram's JPEG
+  re-encode instead of flattening or banding.
+- Logo disc is now a small medallion: a metallic gradient ring frames the
+  white disc with a small gap (like a coin's rim), plus a bright glint arc
+  along the ring's upper-left edge to simulate light catching a curved
+  surface. Applies to all three card shapes (standard, compact, rich
+  manual-post) — same coordinates as before, so nothing else moved.
+
 ## v0.7.0 — Premium chart redesign, candlestick style
 
 **Added**

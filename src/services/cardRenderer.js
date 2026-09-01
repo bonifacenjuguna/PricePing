@@ -44,12 +44,16 @@ const DOWN_COLOR = '#C62828';
 
 // Shared "detailing" defs: a diagonal same-hue gradient (depth, without a
 // second brand color), a corner vignette, a soft radial glow to sit behind
-// the logo, and two drop-shadow filters (one for large flat shapes like
-// the logo disc, a lighter one for text/badges). Deliberately NOT using a
-// noise/grain texture here — fine per-pixel grain compresses terribly
-// under Telegram's forced JPEG re-encode (it either gets smoothed away or
-// turns into blocky mosquito-noise artifacts), so it would undo the
-// sharpness work. Smooth gradients, a vignette, and blurred shadows
+// the logo, two "premium dashboard" background accents (a brand-tinted
+// corner glow + an opposite-corner soft blob, both smooth gradients — no
+// blur filters needed since gradients themselves compress cleanly), a
+// faint diagonal sheen (glass-reflection band), a metallic ring gradient
+// framing the logo disc, and two drop-shadow filters (one for large flat
+// shapes like the logo disc, a lighter one for text/badges). Deliberately
+// NOT using a noise/grain texture here — fine per-pixel grain compresses
+// terribly under Telegram's forced JPEG re-encode (it either gets smoothed
+// away or turns into blocky mosquito-noise artifacts), so it would undo
+// the sharpness work. Smooth gradients, a vignette, and blurred shadows
 // compress cleanly by comparison — and the contrast on all of them is
 // deliberately pushed strong, because anything subtle disappears once
 // this gets shrunk to a phone chat-bubble thumbnail.
@@ -59,6 +63,22 @@ function buildDetailDefs(coin) {
       <stop offset="0%" stop-color="${shade(coin.color, 0.24)}" />
       <stop offset="100%" stop-color="${shade(coin.color, -0.34)}" />
     </linearGradient>
+    <radialGradient id="edgeGlow" cx="94%" cy="-6%" r="65%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24" />
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="blobGlow" cx="10%" cy="118%" r="60%">
+      <stop offset="0%" stop-color="${shade(coin.color, -0.5)}" stop-opacity="0.55" />
+      <stop offset="100%" stop-color="${shade(coin.color, -0.5)}" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="sheenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0" />
+      <stop offset="38%" stop-color="#FFFFFF" stop-opacity="0" />
+      <stop offset="47%" stop-color="#FFFFFF" stop-opacity="0.10" />
+      <stop offset="56%" stop-color="#FFFFFF" stop-opacity="0" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </linearGradient>
     <radialGradient id="vignette" cx="50%" cy="42%" r="75%">
       <stop offset="55%" stop-color="#000000" stop-opacity="0" />
       <stop offset="100%" stop-color="#000000" stop-opacity="0.4" />
@@ -67,11 +87,19 @@ function buildDetailDefs(coin) {
       <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55" />
       <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
     </radialGradient>
+    <linearGradient id="logoRingGrad" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="${shade(coin.color, 0.5)}" />
+      <stop offset="50%" stop-color="${coin.color}" />
+      <stop offset="100%" stop-color="${shade(coin.color, -0.45)}" />
+    </linearGradient>
     <filter id="shapeShadow" x="-60%" y="-60%" width="220%" height="220%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35" />
     </filter>
     <filter id="textShadow" x="-40%" y="-40%" width="180%" height="180%">
       <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+    <filter id="ringShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.4" />
     </filter>`;
 }
 
@@ -82,10 +110,40 @@ function buildVignette(width, height) {
   return `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#vignette)" />`;
 }
 
-// Soft glow sitting behind the white logo disc — cx/cy/r in the same
-// coordinate space as the disc itself, just a bigger, blurred radius.
-function buildLogoGlow(cx, cy, r) {
-  return `<circle cx="${cx}" cy="${cy}" r="${r * 1.7}" fill="url(#logoGlow)" />`;
+// The three background accents that turn the previously-flat brand-color
+// panel into something with real depth: a bright glow tucked into the top
+// corner (like light catching the edge of a glass panel), a darker
+// brand-tinted blob pooling in the opposite corner (grounds the card so it
+// doesn't feel like a flat sticker), and a very faint diagonal sheen band
+// across the whole card (the same "glass card" reflection used on premium
+// UI/fintech cards). Each is a plain smooth gradient — no blur filters
+// needed — specifically so it survives Telegram's JPEG re-encode instead
+// of degrading into banding or noise.
+function buildBackgroundAccents(width, height) {
+  return `
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#edgeGlow)" />
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#blobGlow)" />
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#sheenGrad)" />`;
+}
+
+// Logo "medallion": soft glow, a metallic gradient ring framing the white
+// disc (like a coin's rim), a bright glint arc along the ring's upper-left
+// edge (simulates a light catching a curved edge), then the white disc
+// itself — the coin PNG gets composited on top of this afterward. r is the
+// disc radius; the ring sits just outside it with a small gap so it reads
+// as a separate frame rather than a thick outline.
+function buildLogoBadge(cx, cy, r) {
+  const ringR = r + 9;
+  const circumference = 2 * Math.PI * ringR;
+  const glintLen = circumference * 0.22;
+  return `
+    <circle cx="${cx}" cy="${cy}" r="${r * 1.7}" fill="url(#logoGlow)" />
+    <circle cx="${cx}" cy="${cy}" r="${ringR}" fill="none" stroke="url(#logoRingGrad)" stroke-width="6"
+            opacity="0.95" filter="url(#ringShadow)" />
+    <circle cx="${cx}" cy="${cy}" r="${ringR}" fill="none" stroke="#FFFFFF" stroke-width="2.5"
+            stroke-dasharray="${glintLen.toFixed(1)} ${(circumference - glintLen).toFixed(1)}"
+            opacity="0.55" transform="rotate(-135 ${cx} ${cy})" />
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />`;
 }
 
 // Builds the flat SVG background: brand-colored panel, name/price text,
@@ -152,9 +210,9 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
      xmlns="http://www.w3.org/2000/svg">
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
   <rect x="0" y="0" width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildBackgroundAccents(COMPACT_WIDTH, COMPACT_HEIGHT)}
   ${buildVignette(COMPACT_WIDTH, COMPACT_HEIGHT)}
-  ${buildLogoGlow(logoCx, COMPACT_LOGO_CIRCLE_CY, COMPACT_LOGO_CIRCLE_R)}
-  <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
+  ${buildLogoBadge(logoCx, COMPACT_LOGO_CIRCLE_CY, COMPACT_LOGO_CIRCLE_R)}
   <text x="${logoCx + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
         font-size="52" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${symbolStr}</text>
   <text x="${100 + COMPACT_PAD + COMPACT_EXTRA_INSET}" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
@@ -170,11 +228,11 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
   <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildBackgroundAccents(CARD_WIDTH, CARD_HEIGHT)}
   ${buildVignette(CARD_WIDTH, CARD_HEIGHT)}
 
-  <!-- logo backing circle (logo PNG composited on top of this at render time) -->
-  ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
-  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
+  <!-- logo medallion (logo PNG composited on top of this at render time) -->
+  ${buildLogoBadge(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
 
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="172" font-family="Poppins, sans-serif"
         font-size="62" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${nameStr}</text>
@@ -265,9 +323,9 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
   <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
   <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildBackgroundAccents(CARD_WIDTH, CARD_HEIGHT)}
   ${buildVignette(CARD_WIDTH, CARD_HEIGHT)}
-  ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
-  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
+  ${buildLogoBadge(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
 
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="172" font-family="Poppins, sans-serif"
         font-size="62" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${nameStr}</text>
