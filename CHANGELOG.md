@@ -3,6 +3,15 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.3 — Compact card content centering
+
+**Changed**
+- Compact card content (logo, price, badge, watermark) nudged further
+  inward toward center — canvas size unchanged (still the same width
+  and height as v0.6.1/v0.6.2).
+
+---
+
 ## v0.6.2 — Test/preview parity, watermark, caption layout
 
 **Fixed**

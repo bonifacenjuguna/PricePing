@@ -23,6 +23,10 @@ const COMPACT_HEIGHT = 360;
 // pushing all content inward, rather than shrinking anything.
 const COMPACT_PAD = 110;
 const COMPACT_WIDTH = CARD_WIDTH + COMPACT_PAD * 2;
+// Nudges content further toward center within the same COMPACT_WIDTH/HEIGHT
+// canvas — doesn't change overall card size, just how much of the pad is
+// "used" as inset vs. left as edge margin.
+const COMPACT_EXTRA_INSET = 50;
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
@@ -83,9 +87,9 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   // Telegram's feed-preview crop lands on blank margin instead of content,
   // price sits higher — for channels that want less visual noise per post.
   if (compact) {
-    const logoCx = LOGO_CIRCLE_CX + COMPACT_PAD;
-    const compactBadge = renderBadge(COMPACT_WIDTH, 60 + COMPACT_PAD);
-    const compactWatermark = renderWatermark(COMPACT_WIDTH, 40 + COMPACT_PAD, COMPACT_HEIGHT - 44, 26);
+    const logoCx = LOGO_CIRCLE_CX + COMPACT_PAD + COMPACT_EXTRA_INSET;
+    const compactBadge = renderBadge(COMPACT_WIDTH, 60 + COMPACT_PAD + COMPACT_EXTRA_INSET);
+    const compactWatermark = renderWatermark(COMPACT_WIDTH, 40 + COMPACT_PAD + COMPACT_EXTRA_INSET, COMPACT_HEIGHT - 44, 26);
     return `
 <svg width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" viewBox="0 0 ${COMPACT_WIDTH} ${COMPACT_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
@@ -94,7 +98,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
   <text x="${logoCx + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
         font-size="52" font-weight="700" fill="${textColor}">${symbolStr}</text>
-  <text x="${100 + COMPACT_PAD}" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
+  <text x="${100 + COMPACT_PAD + COMPACT_EXTRA_INSET}" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
         fill="${textColor}">${escapeXml(priceStr)}</text>
   ${compactBadge}
   ${compactWatermark}
@@ -222,7 +226,7 @@ async function compositeLogo(base, coin, compact) {
   if (!fs.existsSync(logoPath)) return base;
   const size = compact ? COMPACT_LOGO_SIZE : LOGO_SIZE;
   const cy = compact ? COMPACT_LOGO_CIRCLE_CY : LOGO_CIRCLE_CY;
-  const cx = compact ? LOGO_CIRCLE_CX + COMPACT_PAD : LOGO_CIRCLE_CX;
+  const cx = compact ? LOGO_CIRCLE_CX + COMPACT_PAD + COMPACT_EXTRA_INSET : LOGO_CIRCLE_CX;
   const logoBuffer = await sharp(logoPath).resize(size, size, { fit: 'contain' }).toBuffer();
   return base.composite([
     {
