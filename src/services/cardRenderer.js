@@ -3,7 +3,7 @@ const path = require('path');
 const sharp = require('sharp');
 const config = require('../config');
 const format = require('../utils/format');
-const { contrastTextColor } = require('../utils/colors');
+const { contrastTextColor, shade } = require('../utils/colors');
 const { FONT_FACES, escapeXml } = require('../utils/fonts');
 const { buildLinePath } = require('./chartRenderer');
 
@@ -42,6 +42,38 @@ const COMPACT_EXTRA_INSET = 90;
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
 
+// Shared "detailing" defs: a diagonal same-hue gradient (depth, without a
+// second brand color), a soft radial glow to sit behind the logo, and two
+// drop-shadow filters (one for large flat shapes like the logo disc, a
+// lighter one for text/badges). Deliberately NOT using a noise/grain
+// texture here — fine per-pixel grain compresses terribly under Telegram's
+// forced JPEG re-encode (it either gets smoothed away or turns into
+// blocky mosquito-noise artifacts), so it would undo the sharpness work.
+// Smooth gradients and blurred shadows compress cleanly by comparison.
+function buildDetailDefs(coin) {
+  return `
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${shade(coin.color, 0.13)}" />
+      <stop offset="100%" stop-color="${shade(coin.color, -0.17)}" />
+    </linearGradient>
+    <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+    <filter id="shapeShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.22" />
+    </filter>
+    <filter id="textShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.16" />
+    </filter>`;
+}
+
+// Soft glow sitting behind the white logo disc — cx/cy/r in the same
+// coordinate space as the disc itself, just a bigger, blurred radius.
+function buildLogoGlow(cx, cy, r) {
+  return `<circle cx="${cx}" cy="${cy}" r="${r * 1.7}" fill="url(#logoGlow)" />`;
+}
+
 // Builds the flat SVG background: brand-colored panel, name/price text,
 // direction badge (skipped for stablecoins), and the @PricePing watermark.
 // The coin logo itself is NOT drawn here — see render() below, it's
@@ -77,7 +109,7 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
     const { badgeColor, badgeText, badgeHeight, badgeFontSize, badgeWidth } = badgeInfo;
     const badgeX = width - rightMargin - badgeWidth;
     return `
-      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="${badgeColor}" />
+      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="${badgeHeight}" rx="${badgeHeight / 2}" fill="${badgeColor}" filter="url(#shapeShadow)" />
       <text x="${badgeX + badgeWidth / 2}" y="${60 + badgeHeight / 2 + 12}" font-family="Poppins, sans-serif"
             font-size="${badgeFontSize}" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(
               badgeText
@@ -104,13 +136,14 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
     return `
 <svg width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" viewBox="0 0 ${COMPACT_WIDTH} ${COMPACT_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
-  <defs>${FONT_FACES}</defs>
-  <rect x="0" y="0" width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" fill="${coin.color}" />
-  <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
+  <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
+  <rect x="0" y="0" width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildLogoGlow(logoCx, COMPACT_LOGO_CIRCLE_CY, COMPACT_LOGO_CIRCLE_R)}
+  <circle cx="${logoCx}" cy="${COMPACT_LOGO_CIRCLE_CY}" r="${COMPACT_LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
   <text x="${logoCx + COMPACT_LOGO_CIRCLE_R + 40}" y="${COMPACT_LOGO_CIRCLE_CY + 12}" font-family="Poppins, sans-serif"
-        font-size="52" font-weight="700" fill="${textColor}">${symbolStr}</text>
+        font-size="52" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${symbolStr}</text>
   <text x="${100 + COMPACT_PAD + COMPACT_EXTRA_INSET}" y="300" font-family="Poppins, sans-serif" font-size="84" font-weight="700"
-        fill="${textColor}">${escapeXml(priceStr)}</text>
+        fill="${textColor}" filter="url(#textShadow)">${escapeXml(priceStr)}</text>
   ${compactBadge}
   ${compactWatermark}
 </svg>`;
@@ -119,20 +152,21 @@ function buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, aler
   return `
 <svg width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
-  <defs>${FONT_FACES}</defs>
+  <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${coin.color}" />
+  <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
 
   <!-- logo backing circle (logo PNG composited on top of this at render time) -->
-  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
+  ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
+  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
 
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="172" font-family="Poppins, sans-serif"
-        font-size="62" font-weight="700" fill="${textColor}">${nameStr}</text>
+        font-size="62" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${nameStr}</text>
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="218" font-family="Poppins, sans-serif"
         font-size="40" font-weight="400" fill="${subTextColor}">${symbolStr}</text>
 
   <text x="100" y="430" font-family="Poppins, sans-serif" font-size="96" font-weight="700"
-        fill="${textColor}">${escapeXml(priceStr)}</text>
+        fill="${textColor}" filter="url(#textShadow)">${escapeXml(priceStr)}</text>
 
   ${badge}
   ${watermark}
@@ -165,7 +199,7 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
     const badgeWidth = 60 + badgeText.length * 15;
     const badgeX = CARD_WIDTH - 60 - badgeWidth;
     badge = `
-      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="64" rx="32" fill="${badgeColor}" />
+      <rect x="${badgeX}" y="60" width="${badgeWidth}" height="64" rx="32" fill="${badgeColor}" filter="url(#shapeShadow)" />
       <text x="${badgeX + badgeWidth / 2}" y="102" font-family="Poppins, sans-serif"
             font-size="28" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(
               badgeText
@@ -212,18 +246,19 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
   return `
 <svg width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
-  <defs>${FONT_FACES}</defs>
+  <defs>${FONT_FACES}${buildDetailDefs(coin)}</defs>
 
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${coin.color}" />
-  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" />
+  <rect x="0" y="0" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bgGrad)" />
+  ${buildLogoGlow(LOGO_CIRCLE_CX, LOGO_CIRCLE_CY, LOGO_CIRCLE_R)}
+  <circle cx="${LOGO_CIRCLE_CX}" cy="${LOGO_CIRCLE_CY}" r="${LOGO_CIRCLE_R}" fill="#FFFFFF" opacity="0.95" filter="url(#shapeShadow)" />
 
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="172" font-family="Poppins, sans-serif"
-        font-size="62" font-weight="700" fill="${textColor}">${nameStr}</text>
+        font-size="62" font-weight="700" fill="${textColor}" filter="url(#textShadow)">${nameStr}</text>
   <text x="${LOGO_CIRCLE_CX + LOGO_CIRCLE_R + 40}" y="218" font-family="Poppins, sans-serif"
         font-size="40" font-weight="400" fill="${subTextColor}">${symbolStr}</text>
 
   <text x="100" y="400" font-family="Poppins, sans-serif" font-size="88" font-weight="700"
-        fill="${textColor}">${escapeXml(priceStr)}</text>
+        fill="${textColor}" filter="url(#textShadow)">${escapeXml(priceStr)}</text>
 
   ${statsRow}
   ${sparkline}

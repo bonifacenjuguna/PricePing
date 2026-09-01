@@ -128,9 +128,19 @@ async function renderChart({ coin, candles, periodKey }) {
     <clipPath id="roundedCard">
       <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" rx="28" />
     </clipPath>
+    <linearGradient id="chartBgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#191D25" />
+      <stop offset="100%" stop-color="#0A0C10" />
+    </linearGradient>
+    <filter id="lineGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7" />
+    </filter>
+    <filter id="pillShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
   </defs>
   <g clip-path="url(#roundedCard)">
-    <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" fill="#0E1116" />
+    <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" fill="url(#chartBgGrad)" />
 
     <text x="${60 + CHART_PAD}" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700" fill="#FFFFFF">${escapeXml(
     coin.name
@@ -141,12 +151,16 @@ async function renderChart({ coin, candles, periodKey }) {
 
     <text x="${CHART_CANVAS_WIDTH - CHART_PAD - 60}" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700"
           fill="#FFFFFF" text-anchor="end">$${format.formatPrice(last)}</text>
-    <rect x="${pctBadgeX}" y="76" width="${pctBadgeWidth}" height="40" rx="20" fill="${badgeColor}" />
+    <rect x="${pctBadgeX}" y="76" width="${pctBadgeWidth}" height="40" rx="20" fill="${badgeColor}" filter="url(#pillShadow)" />
     <text x="${pctBadgeX + pctBadgeWidth / 2}" y="103" font-family="Poppins, sans-serif" font-size="24" font-weight="700"
           fill="#FFFFFF" text-anchor="middle">${escapeXml(pctText)}</text>
 
     ${gridLines.join('\n    ')}
     ${gridLabels.join('\n    ')}
+    <!-- soft neon-style glow sitting under the crisp line on top -->
+    <g opacity="0.6" filter="url(#lineGlow)">
+      ${buildLinePath(candles, { x: plotX, y: plotY, width: plotWidth, height: plotHeight, strokeColor: lineColor, strokeWidth: 8 })}
+    </g>
     ${linePath}
 
     <text x="${CHART_CANVAS_WIDTH - CHART_PAD - 40}" y="${CHART_HEIGHT - 30}" font-family="Poppins, sans-serif" font-size="26"

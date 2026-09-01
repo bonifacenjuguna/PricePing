@@ -31,4 +31,20 @@ function mutedVariant(hex, textColor) {
   return textColor === '#FFFFFF' ? 'rgba(255,255,255,0.72)' : 'rgba(26,26,26,0.65)';
 }
 
-module.exports = { hexToRgb, relativeLuminance, contrastTextColor, mutedVariant };
+// Blends a hex color toward white (amt > 0) or black (amt < 0). amt is
+// 0..1. Used for the card background gradient — a same-hue lighter/darker
+// pair reads as "premium depth" without introducing a second brand color.
+function clamp(v) {
+  return Math.max(0, Math.min(255, v));
+}
+
+function shade(hex, amt) {
+  const { r, g, b } = hexToRgb(hex);
+  const target = amt < 0 ? 0 : 255;
+  const p = Math.abs(amt);
+  const blend = (c) => Math.round(clamp(c + (target - c) * p));
+  const toHex = (c) => c.toString(16).padStart(2, '0');
+  return `#${toHex(blend(r))}${toHex(blend(g))}${toHex(blend(b))}`;
+}
+
+module.exports = { hexToRgb, relativeLuminance, contrastTextColor, mutedVariant, shade };

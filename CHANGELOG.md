@@ -3,6 +3,40 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.7 — Card detailing: gradient background, shadows, glow
+
+**Changed**
+- All card types (threshold, milestone, manual, compact, chart) moved
+  off a flat solid-color fill to a subtle diagonal gradient (same hue,
+  lighter-to-darker) for depth.
+- Added a soft radial glow behind the logo disc, and drop shadows under
+  the logo, price, coin name, and badge/pill elements so they read as
+  layered rather than flat-pasted.
+- Chart (`/chart`, `/postchart`): background is now a subtle vertical
+  gradient instead of flat dark fill, and the price line has a soft
+  colored glow under the crisp stroke (neon-chart look).
+- Deliberately did NOT add a grain/noise texture — fine per-pixel noise
+  compresses badly under Telegram's forced JPEG re-encode and would
+  fight the v0.6.6 sharpness work. Gradients and blurred shadows were
+  used instead since they survive that re-encode cleanly.
+
+## v0.6.6 — Sharper renders, symbol dropped from captions
+
+**Changed**
+- Default captions (threshold, milestone, manual, chart) no longer repeat
+  `(SYMBOL)` — it's already on the card image itself — and dropped the
+  `·` separator in favor of a single space (non-breaking, so Telegram
+  can't wrap `@PricePing` onto its own line): `Name — main info @PricePing`.
+- All cards and charts now rasterize at 3x their layout size (via SVG
+  density, not by touching any coordinate) before being flattened to
+  PNG, so there's meaningfully more real pixel data for Telegram's
+  forced JPEG re-encode to work with. Added a light sharpen pass and
+  tuned PNG compression on top.
+- Coin logos are pre-rendered at 512px instead of 256px (both the
+  build-time asset script and the `/addcoin` runtime path), with a
+  higher-quality resize kernel, so the logo doesn't become the blurry
+  weak link once everything else is sharper.
+
 ## v0.6.5 — One-line captions
 
 **Changed**
