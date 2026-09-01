@@ -231,9 +231,7 @@ function buildChrome({ coin, direction, preset, candles }) {
 
   const footer = `
     <text x="${CHART_CANVAS_WIDTH - CHART_PAD - 40}" y="${CHART_HEIGHT - 32}" font-family="Poppins, sans-serif" font-size="26"
-          font-weight="700" fill="#FFFFFF" text-anchor="end" opacity="0.9">@PricePing</text>
-    <text x="${60 + CHART_PAD}" y="${CHART_HEIGHT - 32}" font-family="Poppins, sans-serif" font-size="19"
-          fill="${AXIS_TEXT_COLOR}" text-anchor="start">Source: Binance</text>`;
+          font-weight="700" fill="#FFFFFF" text-anchor="end" opacity="0.9">@PricePing</text>`;
 
   return { defs, background, vignette, header, footer, plotX, plotY, plotWidth, plotHeight, timeLabels, lineColor };
 }

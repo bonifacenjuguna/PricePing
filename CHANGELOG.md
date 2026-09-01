@@ -3,6 +3,20 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.1 — Sparkline/watermark overlap, drop Binance credit
+
+**Fixed**
+- Manual-post rich card: the embedded 24h sparkline and the `@PricePing`
+  watermark occupied almost the exact same y-range, so a downward-trending
+  line would visually cross through the watermark text. Raised the
+  sparkline so its bottom clears the watermark.
+
+**Removed**
+- `/chart`: dropped the "Source: Binance" footer text — only credit shown
+  on any card/chart is `@PricePing`.
+
+---
+
 ## v0.7.0 — Premium chart redesign, candlestick style
 
 **Added**

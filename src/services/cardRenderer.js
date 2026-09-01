@@ -236,9 +236,9 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
   if (candles && candles.length > 1) {
     const sparkColor = textColor === '#FFFFFF' ? '#FFFFFF' : '#1A1A1A';
     const sparkX = 620;
-    const sparkY = 440;
+    const sparkY = 400;
     const sparkWidth = 400;
-    const sparkHeight = 90;
+    const sparkHeight = 70; // was 90 — bottom now sits well above the watermark instead of ending flush with it
     sparkline = `
       <text x="${sparkX}" y="${sparkY - 14}" font-family="Poppins, sans-serif" font-size="24"
             font-weight="400" fill="${statLabelColor}">Last 24h</text>
