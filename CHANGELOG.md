@@ -3,6 +3,19 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.5 — One-line captions
+
+**Changed**
+- All four default captions (threshold, milestone, manual, chart)
+  collapsed to a single line: `Name (SYMBOL) — main info  ·  @PricePing`.
+  Dropped the %/milestone-level/24h-stats line from each — that data is
+  already shown on the card image itself (badge, stats row), so
+  repeating it in text was pure duplication. Only affects channels
+  still on the built-in default; anyone with a custom `/setcaption`
+  keeps their own layout (`/resetcaption` to pick up the new default).
+
+---
+
 ## v0.6.4 — Chart crop fix + more compact-card inset
 
 **Fixed**
