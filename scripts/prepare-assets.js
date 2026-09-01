@@ -23,7 +23,10 @@ const sharp = require('sharp');
 const { coins, logosDir } = require('../src/coins');
 const { resolveLogoSvg } = require('../src/utils/logoFetch');
 
-const LOGO_SIZE = 256;
+// Bumped from 256 — cards now composite this logo onto a 3x-supersampled
+// canvas (see SUPERSAMPLE in cardRenderer.js), so the source needs enough
+// real detail that scaling it up isn't just blurring 256px further.
+const LOGO_SIZE = 512;
 
 async function processCoin(coin) {
   const svgPath = path.join(logosDir, `${coin.symbol.toLowerCase()}.svg`);
@@ -36,7 +39,7 @@ async function processCoin(coin) {
 
   fs.writeFileSync(svgPath, svgContent, 'utf8');
   const pngBuffer = await sharp(Buffer.from(svgContent))
-    .resize(LOGO_SIZE, LOGO_SIZE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(LOGO_SIZE, LOGO_SIZE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 }, kernel: 'lanczos3' })
     .png()
     .toBuffer();
   fs.writeFileSync(pngPath, pngBuffer);

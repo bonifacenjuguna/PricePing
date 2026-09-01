@@ -8,10 +8,10 @@ const customVarsDb = require('../db/customVars');
 // variables documented in VARIABLE_DOCS below, so "what would the default
 // look like" and "what variables exist" always stay in sync.
 const DEFAULT_TEMPLATES = {
-  threshold: '<b>{name}</b> ({symbol}) \u2014 ${price}  \u00B7  {channel_handle}',
-  milestone: '<b>{name}</b> ({symbol}) \u2014 ${price}  \u00B7  {channel_handle}',
-  manual: '<b>{name}</b> ({symbol}) \u2014 ${price}  \u00B7  {channel_handle}',
-  chart: '<b>{name}</b> ({symbol}) \u2014 {period_label}  \u00B7  {channel_handle}',
+  threshold: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
+  milestone: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
+  manual: '<b>{name}</b> \u2014 ${price}\u00A0{channel_handle}',
+  chart: '<b>{name}</b> \u2014 {period_label}\u00A0{channel_handle}',
 };
 
 // Documentation shown by /variables — grouped by where each one is

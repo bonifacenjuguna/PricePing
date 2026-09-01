@@ -9,6 +9,17 @@ const { buildLinePath } = require('./chartRenderer');
 
 const CARD_WIDTH = 1080;
 const CARD_HEIGHT = 566;
+// Every card is rasterized at this many times its declared size (via SVG
+// density, not by changing any layout coordinate), then flattened to a
+// crisp PNG. Telegram re-encodes every sendPhoto upload to JPEG on its end
+// regardless of what we send — that pass is where quality gets lost, and
+// it hits soft/low-detail source images hardest. Feeding it a properly
+// anti-aliased, high-density source instead of a 1x raster is the only
+// lever we have against that: same layout, same aspect ratio, same
+// on-screen size, just far more real pixel data for Telegram's encoder to
+// work with. 3x roughly doubles render time per card but that's cheap
+// relative to a Telegram round trip.
+const SUPERSAMPLE = 3;
 const LOGO_CIRCLE_CX = 170;
 const LOGO_CIRCLE_CY = 195;
 const LOGO_CIRCLE_R = 112;
@@ -221,13 +232,23 @@ function buildRichBackgroundSvg({ coin, price, stats24h, candles }) {
 </svg>`;
 }
 
+// base is rasterized at SUPERSAMPLE x the layout's declared coordinates
+// (via SVG density — see renderCard/renderRichCard), so every coordinate
+// used to place the logo here has to be scaled up to match, or it'd land
+// in the top-left corner of a canvas 3x bigger than it expects.
 async function compositeLogo(base, coin, compact) {
   const logoPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
   if (!fs.existsSync(logoPath)) return base;
-  const size = compact ? COMPACT_LOGO_SIZE : LOGO_SIZE;
-  const cy = compact ? COMPACT_LOGO_CIRCLE_CY : LOGO_CIRCLE_CY;
-  const cx = compact ? LOGO_CIRCLE_CX + COMPACT_PAD + COMPACT_EXTRA_INSET : LOGO_CIRCLE_CX;
-  const logoBuffer = await sharp(logoPath).resize(size, size, { fit: 'contain' }).toBuffer();
+  const size = (compact ? COMPACT_LOGO_SIZE : LOGO_SIZE) * SUPERSAMPLE;
+  const cy = (compact ? COMPACT_LOGO_CIRCLE_CY : LOGO_CIRCLE_CY) * SUPERSAMPLE;
+  const cx = (compact ? LOGO_CIRCLE_CX + COMPACT_PAD + COMPACT_EXTRA_INSET : LOGO_CIRCLE_CX) * SUPERSAMPLE;
+  // kernel: 'lanczos3' — the source PNG is pre-rendered at LOGO_SIZE (see
+  // prepare-assets.js / coinRegistry.js); resizing it up to match the
+  // supersampled canvas benefits from the sharper kernel same as the final
+  // downsize does, rather than libvips' default.
+  const logoBuffer = await sharp(logoPath)
+    .resize(size, size, { fit: 'contain', kernel: 'lanczos3' })
+    .toBuffer();
   return base.composite([
     {
       input: logoBuffer,
@@ -246,9 +267,12 @@ async function compositeLogo(base, coin, compact) {
 // Returns a PNG Buffer ready to send to Telegram.
 async function renderCard({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel, isBigMilestone, compact }) {
   const svg = buildBackgroundSvg({ coin, price, changeUsd, changePct, direction, alertType, milestoneLevel, isBigMilestone, compact });
-  const base = sharp(Buffer.from(svg)).png();
+  const base = sharp(Buffer.from(svg), { density: 72 * SUPERSAMPLE });
   const pipeline = await compositeLogo(base, coin, compact);
-  return pipeline.toBuffer();
+  return pipeline
+    .sharpen({ sigma: 0.6 }) // small edge-contrast boost so text/lines read cleanly after Telegram's JPEG pass
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
 }
 
 // coin: entry from config.coins, price: number
@@ -256,9 +280,12 @@ async function renderCard({ coin, price, changeUsd, changePct, direction, alertT
 // candles: [{openTime, close}] oldest->newest, for the sparkline (optional)
 async function renderRichCard({ coin, price, stats24h, candles }) {
   const svg = buildRichBackgroundSvg({ coin, price, stats24h, candles });
-  const base = sharp(Buffer.from(svg)).png();
+  const base = sharp(Buffer.from(svg), { density: 72 * SUPERSAMPLE });
   const pipeline = await compositeLogo(base, coin, false);
-  return pipeline.toBuffer();
+  return pipeline
+    .sharpen({ sigma: 0.6 })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
 }
 
 module.exports = {

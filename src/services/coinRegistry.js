@@ -8,7 +8,10 @@ const customCoinsDb = require('../db/customCoins');
 const thresholdsDb = require('../db/thresholds');
 const { resolveLogoSvg } = require('../utils/logoFetch');
 
-const LOGO_SIZE = 256;
+// Keep in sync with scripts/prepare-assets.js — same reasoning: cards
+// composite this onto a 3x-supersampled canvas now (see cardRenderer.js),
+// so the source needs real detail at that scale, not an upscaled 256px.
+const LOGO_SIZE = 512;
 
 // config.coins is the SAME array object every other module already holds a
 // reference to (marketData.js, poller.js, commands.js, menu.js, ...).
@@ -38,7 +41,7 @@ async function fetchLogo(coin) {
   const { svgContent, source } = await resolveLogoSvg(coin);
   const pngPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
   const pngBuffer = await sharp(Buffer.from(svgContent))
-    .resize(LOGO_SIZE, LOGO_SIZE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(LOGO_SIZE, LOGO_SIZE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 }, kernel: 'lanczos3' })
     .png()
     .toBuffer();
   fs.writeFileSync(pngPath, pngBuffer);

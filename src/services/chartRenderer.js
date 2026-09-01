@@ -13,6 +13,11 @@ const CHART_HEIGHT = 640;
 const CHART_PAD = 90;
 const CHART_CANVAS_WIDTH = CHART_WIDTH + CHART_PAD * 2;
 const PADDING = { top: 130, right: 60, bottom: 70, left: 90 };
+// See SUPERSAMPLE in cardRenderer.js — same reasoning applies here: render
+// at 3x via SVG density (layout coordinates untouched), so the thin grid
+// lines and sparkline curve survive Telegram's JPEG re-encode cleanly
+// instead of turning fuzzy.
+const SUPERSAMPLE = 3;
 
 const GRID_COLOR = 'rgba(255,255,255,0.14)';
 const AXIS_TEXT_COLOR = 'rgba(255,255,255,0.65)';
@@ -149,7 +154,10 @@ async function renderChart({ coin, candles, periodKey }) {
   </g>
 </svg>`;
 
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return sharp(Buffer.from(svg), { density: 72 * SUPERSAMPLE })
+    .sharpen({ sigma: 0.6 })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
 }
 
 module.exports = { renderChart, buildLinePath, PERIOD_PRESETS };
