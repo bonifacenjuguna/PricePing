@@ -133,6 +133,19 @@ then executes on send; typing `/cancel` at that prompt backs out cleanly.
 - **Rule magnitude conditions** — `/addrule threshold post_chart main
   min:5 1h` only fires when the qualifying move is 5%+ (threshold alerts
   only; milestone/any_alert triggers have no % to compare against).
+- **Rule direction filter** — a rule can be scoped to "up only" or "down
+  only" moves, not just any direction. Set via the button wizard (see
+  below); the raw `/addrule` line syntax doesn't expose it.
+- **Rule action: mute another coin** — a rule can mute a *different* coin
+  for a set duration when it fires (e.g. "BTC drops 5%+ \u2192 mute ETH for
+  1h" to cut noise during a correlated move).
+- **Button-driven rule builder** — `/commands \u2192 Automation \u2192 Rules
+  \u2192 Add rule` walks through trigger type, coin, direction, minimum
+  move, action, and action-specific params (channel, chart period, mute
+  target/duration) entirely with buttons. The only typed-text steps are a
+  custom minimum % and a broadcast message body, since those are
+  inherently free-form. The raw `/addrule <line>` text command still works
+  too, side by side with the buttons.
 - **Multiple default channels by alert type** — `/setdefaultchannel name
   milestone` sends only milestone alerts to that channel, independent of
   the overall default; `/cleardefaultchannel milestone` removes the

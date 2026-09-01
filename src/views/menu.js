@@ -435,6 +435,117 @@ function ruleList(rules) {
   return { text, keyboard };
 }
 
+// ---------- Rule wizard (button-driven /addrule) ----------
+// Every screen below shows a running summary of what's been picked so far,
+// so the flow reads as "building up a sentence" rather than a blind
+// sequence of taps. `s` is the accumulated wizardState.data for this flow.
+function describeRuleSoFar(s) {
+  const bits = [];
+  if (s.triggerType) {
+    const trig = s.triggerSymbol ? `${s.triggerType}:${s.triggerSymbol}` : s.triggerType === 'any_alert' ? 'any alert' : s.triggerType;
+    bits.push(`When: ${trig}`);
+  }
+  if (s.triggerDirection) bits.push(`Direction: ${s.triggerDirection} only`);
+  if (s.minMovePct !== undefined && s.minMovePct !== null) bits.push(`Min move: ${s.minMovePct}%`);
+  if (s.actionType) {
+    const actLabel = { mirror: 'Mirror to', post_chart: 'Post chart to', broadcast: 'Broadcast to', mute_coin: 'Mute' }[s.actionType];
+    bits.push(`Then: ${actLabel || s.actionType}`);
+  }
+  if (s.actionParams && s.actionParams.channel) bits.push(`Channel: #${s.actionParams.channel}`);
+  if (s.actionParams && s.actionParams.period) bits.push(`Period: ${s.actionParams.period}`);
+  if (s.actionParams && s.actionType === 'mute_coin' && s.actionParams.symbol) bits.push(`Coin: ${s.actionParams.symbol}`);
+  return bits.length ? `${bits.join(' \u00B7 ')}\n\n` : '';
+}
+
+function ruleWizardTrigger() {
+  const text = 'New rule \u2014 fire on which kind of alert?';
+  const keyboard = [
+    [{ text: '\uD83D\uDD14 Any alert', callback_data: 'rulewiz:trig:any_alert' }],
+    [{ text: '\uD83D\uDCC8 Threshold', callback_data: 'rulewiz:trig:threshold' }],
+    [{ text: '\uD83C\uDFC1 Milestone', callback_data: 'rulewiz:trig:milestone' }],
+    ...footer('nav:rules'),
+  ];
+  return { text, keyboard };
+}
+
+function ruleWizardCoin(s) {
+  const text = `${describeRuleSoFar(s)}Which coin should trigger it?`;
+  const extraRows = [[{ text: '\uD83C\uDF10 Any coin', callback_data: 'rulewiz:coin:any' }]];
+  return { text, keyboard: coinGrid('rulewiz:coin', { extraRows, parentCallback: 'nav:rules' }) };
+}
+
+function ruleWizardDirection(s) {
+  const text = `${describeRuleSoFar(s)}Only fire on one direction?`;
+  const keyboard = [
+    [{ text: '\u2194\uFE0F Either', callback_data: 'rulewiz:dir:any' }],
+    [
+      { text: '\uD83D\uDFE2 Up only', callback_data: 'rulewiz:dir:up' },
+      { text: '\uD83D\uDD34 Down only', callback_data: 'rulewiz:dir:down' },
+    ],
+    ...footer('nav:rules'),
+  ];
+  return { text, keyboard };
+}
+
+function ruleWizardMinMove(s) {
+  const text = `${describeRuleSoFar(s)}Minimum move size to fire? (only applies to threshold/any-alert triggers \u2014 milestone alerts have no % to compare)`;
+  const presets = ['1', '2', '5', '10'];
+  const buttons = presets.map((p) => ({ text: `${p}%+`, callback_data: `rulewiz:min:${p}` }));
+  const keyboard = [
+    [{ text: 'No minimum', callback_data: 'rulewiz:min:none' }],
+    ...chunk(buttons, 4),
+    [{ text: '\u270F\uFE0F Custom %', callback_data: 'rulewiz:min:custom' }],
+    ...footer('nav:rules'),
+  ];
+  return { text, keyboard };
+}
+
+function ruleWizardAction(s) {
+  const text = `${describeRuleSoFar(s)}What should happen when it fires?`;
+  const keyboard = [
+    [{ text: '\uD83D\uDD01 Mirror to another channel', callback_data: 'rulewiz:act:mirror' }],
+    [{ text: '\uD83D\uDCC8 Post a chart', callback_data: 'rulewiz:act:post_chart' }],
+    [{ text: '\uD83D\uDCE2 Broadcast a message', callback_data: 'rulewiz:act:broadcast' }],
+    [{ text: '\uD83D\uDD07 Mute another coin', callback_data: 'rulewiz:act:mute_coin' }],
+    ...footer('nav:rules'),
+  ];
+  return { text, keyboard };
+}
+
+function ruleWizardChannel(s, channels) {
+  const text = `${describeRuleSoFar(s)}Which channel?`;
+  return { text, keyboard: channelPicker('rulewiz:chan', channels, [backRow('nav:rules')]) };
+}
+
+function ruleWizardPeriod(s) {
+  const text = `${describeRuleSoFar(s)}Chart period?`;
+  const periods = ['1h', '24h', '7d', '30d'];
+  const buttons = periods.map((p) => ({ text: p, callback_data: `rulewiz:per:${p}` }));
+  const keyboard = [...chunk(buttons, 4), ...footer('nav:rules')];
+  return { text, keyboard };
+}
+
+function ruleWizardMuteCoin(s) {
+  const text = `${describeRuleSoFar(s)}Mute which coin?`;
+  return { text, keyboard: coinGrid('rulewiz:mcoin', { parentCallback: 'nav:rules' }) };
+}
+
+function ruleWizardMuteDuration(s) {
+  const text = `${describeRuleSoFar(s)}Mute for how long?`;
+  return { text, keyboard: durationPicker('rulewiz:mdur', [backRow('nav:rules')]) };
+}
+
+function ruleWizardConfirm(s) {
+  const text = `${describeRuleSoFar(s)}Create this rule?`;
+  const keyboard = [
+    [
+      { text: '\u2705 Create', callback_data: 'rulewiz:confirm' },
+      { text: '\u2716 Cancel', callback_data: 'rulewiz:cancel' },
+    ],
+  ];
+  return { text, keyboard };
+}
+
 // ---------- Channels ----------
 function channelList(channels, defaultsByType) {
   const lines = channels.length
@@ -798,6 +909,16 @@ module.exports = {
   automationHub,
   scheduleList,
   ruleList,
+  ruleWizardTrigger,
+  ruleWizardCoin,
+  ruleWizardDirection,
+  ruleWizardMinMove,
+  ruleWizardAction,
+  ruleWizardChannel,
+  ruleWizardPeriod,
+  ruleWizardMuteCoin,
+  ruleWizardMuteDuration,
+  ruleWizardConfirm,
   channelList,
   channelTypePicker,
   channelTypeDefaultPicker,

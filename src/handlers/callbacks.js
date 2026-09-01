@@ -377,6 +377,24 @@ async function onCallback(ctx) {
       return undefined;
     }
 
+    // ---- rulewiz: multi-step button wizard for building a rule ----
+    // (see wizardState.js — accumulated choices live there, not in
+    // callback_data, so each step here only ever carries one short value)
+    if (ns === 'rulewiz') {
+      if (a1 === 'trig') return commands.ruleWizardPickTrigger(ctx, a2);
+      if (a1 === 'coin') return commands.ruleWizardPickCoin(ctx, a2);
+      if (a1 === 'dir') return commands.ruleWizardPickDirection(ctx, a2);
+      if (a1 === 'min') return commands.ruleWizardPickMinMove(ctx, a2);
+      if (a1 === 'act') return commands.ruleWizardPickAction(ctx, a2);
+      if (a1 === 'chan') return commands.ruleWizardPickChannel(ctx, a2);
+      if (a1 === 'per') return commands.ruleWizardPickPeriod(ctx, a2);
+      if (a1 === 'mcoin') return commands.ruleWizardPickMuteCoin(ctx, a2);
+      if (a1 === 'mdur') return commands.ruleWizardPickMuteDuration(ctx, a2);
+      if (a1 === 'confirm') return commands.ruleWizardConfirmExecute(ctx);
+      if (a1 === 'cancel') return commands.ruleWizardCancel(ctx);
+      return undefined;
+    }
+
     // ---- addcoin:start|confirm|cancel ----
     if (ns === 'addcoin') {
       if (a1 === 'start') {

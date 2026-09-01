@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const rulesDb = require('../db/rules');
 const channelsDb = require('../db/channels');
 const alertsLogDb = require('../db/alertsLog');
+const coinState = require('../db/coinState');
 const marketData = require('./marketData');
 const chartRenderer = require('./chartRenderer');
 const templateEngine = require('./templateEngine');
@@ -27,6 +28,10 @@ async function evaluate(telegram, alert) {
   const matching = rules.filter((r) => {
     if (r.triggerType !== 'any_alert' && r.triggerType !== alert.alertType) return false;
     if (r.triggerSymbol && r.triggerSymbol !== alert.coin.symbol) return false;
+    // A direction filter only makes sense against an alert that has a
+    // direction (all of threshold/milestone/manual do). Set once via
+    // "Up only"/"Down only" in the rule wizard; null means either.
+    if (r.triggerDirection && r.triggerDirection !== alert.direction) return false;
     // A magnitude condition only makes sense against a %-move alert
     // (threshold). Milestone/manual/any_alert triggers have no changePct
     // to compare, so a rule with a minMovePct set simply never fires for
@@ -84,6 +89,21 @@ async function runAction(telegram, rule, alert) {
     const vars = templateEngine.buildVariables({ ...alert, channel });
     const text = templateEngine.render(params.message, vars);
     await telegramSender.sendBroadcast(telegram, text, channel);
+    return;
+  }
+
+  if (rule.actionType === 'mute_coin') {
+    const targetSymbol = params.symbol;
+    const minutes = Number(params.minutes) || 60;
+    if (!targetSymbol) {
+      logger.warn(`Rule ${rule.id}: mute_coin has no target symbol configured`);
+      return;
+    }
+    const until = new Date(Date.now() + minutes * 60000);
+    await coinState.setMuteUntil(targetSymbol, until);
+    logger.info(
+      `Rule ${rule.id}: muted ${targetSymbol} for ${minutes}m (triggered by ${alert.coin.symbol} ${alert.alertType})`
+    );
     return;
   }
 

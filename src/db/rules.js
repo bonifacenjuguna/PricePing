@@ -5,6 +5,7 @@ function mapRow(r) {
     id: r.id,
     triggerType: r.trigger_type,
     triggerSymbol: r.trigger_symbol,
+    triggerDirection: r.trigger_direction || null,
     actionType: r.action_type,
     actionParams: r.action_params || {},
     minMovePct: r.min_move_pct === null || r.min_move_pct === undefined ? null : Number(r.min_move_pct),
@@ -22,11 +23,11 @@ async function getEnabled() {
   return rows.map(mapRow);
 }
 
-async function add({ triggerType, triggerSymbol, actionType, actionParams, minMovePct }) {
+async function add({ triggerType, triggerSymbol, triggerDirection, actionType, actionParams, minMovePct }) {
   const { rows } = await pool.query(
-    `INSERT INTO rules (trigger_type, trigger_symbol, action_type, action_params, min_move_pct)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [triggerType, triggerSymbol || null, actionType, JSON.stringify(actionParams || {}), minMovePct ?? null]
+    `INSERT INTO rules (trigger_type, trigger_symbol, trigger_direction, action_type, action_params, min_move_pct)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [triggerType, triggerSymbol || null, triggerDirection || null, actionType, JSON.stringify(actionParams || {}), minMovePct ?? null]
   );
   return rows[0].id;
 }

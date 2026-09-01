@@ -3,6 +3,29 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.2 — Button-driven rule wizard, richer automation
+
+**Added**
+- `/commands \u2192 Automation \u2192 Rules \u2192 Add rule` is now a full
+  button wizard: trigger type \u2192 coin \u2192 direction \u2192 minimum
+  move \u2192 action \u2192 action-specific params (channel, chart period,
+  mute target/duration) \u2014 all taps. Only a custom minimum % and a
+  broadcast message body are still typed text, since those are inherently
+  free-form. The raw `/addrule <line>` command still works too.
+- Rules can now filter by direction ("up only" / "down only"), not just
+  trigger type/symbol/minimum move. New `trigger_direction` column
+  (migration `007_v0_7_2.sql`, additive/nullable \u2014 existing rules keep
+  matching either direction).
+- New rule action: **mute another coin** \u2014 e.g. "BTC drops 5%+ \u2192
+  mute ETH for 1h" to cut correlated noise.
+
+**Changed**
+- New internal `wizardState.js` service: multi-step button flows now keep
+  accumulated state server-side instead of trying to round-trip it all
+  through callback_data (which has a hard 64-byte limit per tap).
+
+---
+
 ## v0.7.1 — Sparkline/watermark overlap, drop Binance credit
 
 **Fixed**

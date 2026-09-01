@@ -26,6 +26,7 @@ const coinRegistry = require('../services/coinRegistry');
 const templateEngine = require('../services/templateEngine');
 const actions = require('../services/actions');
 const pendingInput = require('../services/pendingInput');
+const wizardState = require('../services/wizardState');
 const recentCoins = require('../services/recentCoins');
 const undoStack = require('../services/undoStack');
 
@@ -74,7 +75,7 @@ async function help(ctx) {
       `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
       `/setcaption TYPE[:SYMBOL] <template> \u00B7 /previewcaption TYPE[:SYMBOL] \u00B7 /resetcaption TYPE[:SYMBOL]\n` +
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
-      `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules\n` +
+      `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules \u2014 or build a rule with buttons via /commands \u2192 Automation \u2192 Rules \u2192 Add rule\n` +
       `/broadcast CHANNEL message... \u2014 plain text post\n` +
       `/exportconfig \u00B7 /importconfig\n` +
       `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
@@ -1381,16 +1382,152 @@ async function rulesScreen(ctx) {
 async function rulesListCmd(ctx) {
   await inlineReply(ctx, menu.ruleList(await rulesDb.getAll()));
 }
+// ---------------------------------------------------------------------------
+// Rule wizard — button-driven /addrule. State lives in wizardState (see
+// that module for why: too many accumulated choices to safely encode in
+// callback_data). Only two steps genuinely need typed text — a custom min%
+// and a broadcast message body — everything else is buttons.
+// ---------------------------------------------------------------------------
 async function ruleAddStart(ctx) {
-  const prompt =
-    'Send: <threshold|milestone|any_alert>[:SYMBOL] <mirror|post_chart|broadcast> CHANNEL [min:PCT] [period|message...]\n\n' +
-    'Examples:\n' +
-    'milestone:BTC mirror vip\n' +
-    'threshold post_chart main min:5 1h  (only when the move is 5%+)\n' +
-    'any_alert broadcast news \uD83D\uDEA8 {symbol} just moved!';
-  pendingInput.set('addrule', {}, prompt);
+  wizardState.start('rule', { actionParams: {} });
   await ctx.answerCbQuery();
-  await ctx.reply(prompt);
+  await inlineEdit(ctx, menu.ruleWizardTrigger());
+}
+async function ruleWizardExpired(ctx) {
+  await ctx.answerCbQuery('That flow expired \u2014 start again with Add rule.');
+  await rulesScreen(ctx);
+}
+async function ruleWizardExpiredReply(ctx) {
+  await ctx.reply('That flow expired \u2014 open Automation \u2192 Rules \u2192 Add rule to start again.');
+}
+async function ruleWizardPickTrigger(ctx, triggerType) {
+  const s = wizardState.update('rule', { triggerType });
+  if (!s) return ruleWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardCoin(s));
+}
+async function ruleWizardPickCoin(ctx, symbol) {
+  const s = wizardState.update('rule', { triggerSymbol: symbol === 'any' ? null : symbol });
+  if (!s) return ruleWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardDirection(s));
+}
+async function ruleWizardPickDirection(ctx, dir) {
+  const s = wizardState.update('rule', { triggerDirection: dir === 'any' ? null : dir });
+  if (!s) return ruleWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardMinMove(s));
+}
+async function ruleWizardPickMinMove(ctx, code) {
+  if (code === 'custom') {
+    const s = wizardState.get('rule');
+    if (!s) return ruleWizardExpired(ctx);
+    await ctx.answerCbQuery();
+    const prompt = 'Send the minimum % move to require (e.g. 3.5), or /cancel.';
+    pendingInput.set('rulewiz_custommin', {}, prompt);
+    await ctx.reply(prompt);
+    return;
+  }
+  const minMovePct = code === 'none' ? null : Number(code);
+  const s = wizardState.update('rule', { minMovePct });
+  if (!s) return ruleWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardAction(s));
+}
+async function ruleWizardResumeAfterCustomMin(ctx, text) {
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0) {
+    await ctx.reply("That doesn't look like a positive number \u2014 send just the number, e.g. 3.5.");
+    return;
+  }
+  const s = wizardState.update('rule', { minMovePct: value });
+  if (!s) return ruleWizardExpiredReply(ctx);
+  await inlineReply(ctx, menu.ruleWizardAction(s));
+}
+async function ruleWizardPickAction(ctx, actionType) {
+  const s = wizardState.update('rule', { actionType, actionParams: {} });
+  if (!s) return ruleWizardExpired(ctx);
+  await ctx.answerCbQuery();
+  if (actionType === 'broadcast') {
+    const prompt = 'Send the broadcast message text. Caption variables like {symbol}, {price}, {change_pct} work here too.';
+    pendingInput.set('rulewiz_broadcast', {}, prompt);
+    await ctx.reply(prompt);
+    return;
+  }
+  if (actionType === 'mute_coin') {
+    await inlineEdit(ctx, menu.ruleWizardMuteCoin(s));
+    return;
+  }
+  const channels = await channelsDb.getAll();
+  await inlineEdit(ctx, menu.ruleWizardChannel(s, channels));
+}
+async function ruleWizardResumeAfterBroadcastText(ctx, text) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpiredReply(ctx);
+  s.actionParams.message = text;
+  const channels = await channelsDb.getAll();
+  await inlineReply(ctx, menu.ruleWizardChannel(s, channels));
+}
+async function ruleWizardPickChannel(ctx, channelName) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpired(ctx);
+  s.actionParams.channel = channelName;
+  await ctx.answerCbQuery();
+  if (s.actionType === 'post_chart') {
+    await inlineEdit(ctx, menu.ruleWizardPeriod(s));
+    return;
+  }
+  await inlineEdit(ctx, menu.ruleWizardConfirm(s));
+}
+async function ruleWizardPickPeriod(ctx, period) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpired(ctx);
+  if (!chartRenderer.PERIOD_PRESETS[period]) {
+    await ctx.answerCbQuery('Unknown period');
+    return;
+  }
+  s.actionParams.period = period;
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardConfirm(s));
+}
+async function ruleWizardPickMuteCoin(ctx, symbol) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpired(ctx);
+  s.actionParams.symbol = symbol;
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardMuteDuration(s));
+}
+async function ruleWizardPickMuteDuration(ctx, code) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpired(ctx);
+  const minutesMap = { '30m': 30, '1h': 60, '4h': 240, '1d': 1440, indef: 10 * 365 * 24 * 60 };
+  s.actionParams.minutes = minutesMap[code] || 60;
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.ruleWizardConfirm(s));
+}
+async function ruleWizardConfirmExecute(ctx) {
+  const s = wizardState.get('rule');
+  if (!s) return ruleWizardExpired(ctx);
+  if (s.actionType !== 'mute_coin' && !s.actionParams.channel) {
+    await ctx.answerCbQuery('Missing channel \u2014 start again');
+    return;
+  }
+  const id = await rulesDb.add({
+    triggerType: s.triggerType,
+    triggerSymbol: s.triggerSymbol || null,
+    triggerDirection: s.triggerDirection || null,
+    actionType: s.actionType,
+    actionParams: s.actionParams,
+    minMovePct: s.minMovePct ?? null,
+  });
+  wizardState.clear();
+  await ctx.answerCbQuery('Created');
+  await rulesScreen(ctx);
+}
+async function ruleWizardCancel(ctx) {
+  wizardState.clear();
+  await ctx.answerCbQuery('Cancelled');
+  await rulesScreen(ctx);
 }
 async function ruleCmd(ctx) {
   const rest = ctx.message.text.replace(/^\/addrule\s*/, '');
@@ -2087,6 +2224,8 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'editschedule') return runAddSchedule(ctx, parts, pending.context.id);
   if (pending.action === 'addrule') return runAddRule(ctx, text);
   if (pending.action === 'editrule') return runAddRule(ctx, text, pending.context.id);
+  if (pending.action === 'rulewiz_custommin') return ruleWizardResumeAfterCustomMin(ctx, text);
+  if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
@@ -2210,6 +2349,17 @@ module.exports = {
   rulesScreen,
   rulesListCmd,
   ruleAddStart,
+  ruleWizardPickTrigger,
+  ruleWizardPickCoin,
+  ruleWizardPickDirection,
+  ruleWizardPickMinMove,
+  ruleWizardPickAction,
+  ruleWizardPickChannel,
+  ruleWizardPickPeriod,
+  ruleWizardPickMuteCoin,
+  ruleWizardPickMuteDuration,
+  ruleWizardConfirmExecute,
+  ruleWizardCancel,
   ruleCmd,
   ruleDel,
   ruleEditStart,
