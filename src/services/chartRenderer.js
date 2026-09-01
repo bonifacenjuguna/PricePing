@@ -4,6 +4,14 @@ const { FONT_FACES, escapeXml } = require('../utils/fonts');
 
 const CHART_WIDTH = 1080;
 const CHART_HEIGHT = 640;
+// Same crop problem as the compact alert card: Telegram's chat-list bubble
+// preview clips the left/right edges of an image, and this chart's title,
+// price/pct, and watermark all sat flush against them. Widen the canvas and
+// shift every element inward by CHART_PAD so the crop lands on blank
+// margin — the plot area itself keeps its original CHART_WIDTH geometry,
+// just offset.
+const CHART_PAD = 90;
+const CHART_CANVAS_WIDTH = CHART_WIDTH + CHART_PAD * 2;
 const PADDING = { top: 130, right: 60, bottom: 70, left: 90 };
 
 const GRID_COLOR = 'rgba(255,255,255,0.14)';
@@ -68,7 +76,7 @@ async function renderChart({ coin, candles, periodKey }) {
   const direction = changePct >= 0 ? 'up' : 'down';
   const lineColor = direction === 'up' ? '#3DDC84' : '#FF5C5C';
 
-  const plotX = PADDING.left;
+  const plotX = PADDING.left + CHART_PAD;
   const plotY = PADDING.top;
   const plotWidth = CHART_WIDTH - PADDING.left - PADDING.right;
   const plotHeight = CHART_HEIGHT - PADDING.top - PADDING.bottom;
@@ -102,31 +110,43 @@ async function renderChart({ coin, candles, periodKey }) {
 
   const arrow = format.directionSymbol(direction);
   const pctStr = format.formatPct(changePct);
+  const pctText = `${arrow} ${pctStr}`;
+  const pctBadgeWidth = 46 + pctText.length * 16;
+  const pctBadgeX = CHART_CANVAS_WIDTH - CHART_PAD - 60 - pctBadgeWidth;
+  const badgeColor = direction === 'up' ? '#1F8A4C' : '#C62828';
 
   const svg = `
-<svg width="${CHART_WIDTH}" height="${CHART_HEIGHT}" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}"
+<svg width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" viewBox="0 0 ${CHART_CANVAS_WIDTH} ${CHART_HEIGHT}"
      xmlns="http://www.w3.org/2000/svg">
-  <defs>${FONT_FACES}</defs>
-  <rect x="0" y="0" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" fill="#0E1116" />
+  <defs>
+    ${FONT_FACES}
+    <clipPath id="roundedCard">
+      <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" rx="28" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#roundedCard)">
+    <rect x="0" y="0" width="${CHART_CANVAS_WIDTH}" height="${CHART_HEIGHT}" fill="#0E1116" />
 
-  <text x="60" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700" fill="#FFFFFF">${escapeXml(
+    <text x="${60 + CHART_PAD}" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700" fill="#FFFFFF">${escapeXml(
     coin.name
   )} (${escapeXml(coin.symbol)})</text>
-  <text x="60" y="98" font-family="Poppins, sans-serif" font-size="26" font-weight="400" fill="${AXIS_TEXT_COLOR}">${escapeXml(
+    <text x="${60 + CHART_PAD}" y="98" font-family="Poppins, sans-serif" font-size="26" font-weight="400" fill="${AXIS_TEXT_COLOR}">${escapeXml(
     preset.label
   )}</text>
 
-  <text x="${CHART_WIDTH - 60}" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700"
-        fill="#FFFFFF" text-anchor="end">$${format.formatPrice(last)}</text>
-  <text x="${CHART_WIDTH - 60}" y="98" font-family="Poppins, sans-serif" font-size="28" font-weight="700"
-        fill="${lineColor}" text-anchor="end">${arrow} ${pctStr}</text>
+    <text x="${CHART_CANVAS_WIDTH - CHART_PAD - 60}" y="60" font-family="Poppins, sans-serif" font-size="42" font-weight="700"
+          fill="#FFFFFF" text-anchor="end">$${format.formatPrice(last)}</text>
+    <rect x="${pctBadgeX}" y="76" width="${pctBadgeWidth}" height="40" rx="20" fill="${badgeColor}" />
+    <text x="${pctBadgeX + pctBadgeWidth / 2}" y="103" font-family="Poppins, sans-serif" font-size="24" font-weight="700"
+          fill="#FFFFFF" text-anchor="middle">${escapeXml(pctText)}</text>
 
-  ${gridLines.join('\n  ')}
-  ${gridLabels.join('\n  ')}
-  ${linePath}
+    ${gridLines.join('\n    ')}
+    ${gridLabels.join('\n    ')}
+    ${linePath}
 
-  <text x="${CHART_WIDTH - 40}" y="${CHART_HEIGHT - 30}" font-family="Poppins, sans-serif" font-size="26"
-        font-weight="700" fill="#FFFFFF" text-anchor="end" opacity="0.85">@PricePing</text>
+    <text x="${CHART_CANVAS_WIDTH - CHART_PAD - 40}" y="${CHART_HEIGHT - 30}" font-family="Poppins, sans-serif" font-size="26"
+          font-weight="700" fill="#FFFFFF" text-anchor="end" opacity="0.85">@PricePing</text>
+  </g>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();

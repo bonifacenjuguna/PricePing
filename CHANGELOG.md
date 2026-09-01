@@ -3,6 +3,23 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.6.4 — Chart crop fix + more compact-card inset
+
+**Fixed**
+- `/chart` and `/postchart`: same crop problem as the alert cards —
+  title, price/%, and watermark sat flush against the edges. Widened
+  the canvas (1080→1260, height unchanged) and shifted everything
+  inward so Telegram's chat-list crop lands on blank margin.
+- Compact alert card: increased the inward inset further (logo/price
+  right, badge/watermark left) — the previous nudge wasn't enough to
+  fully clear the crop zone.
+
+**Changed**
+- Chart: rounded card corners, and the % change is now a colored pill
+  badge (matching the alert cards) instead of plain colored text.
+
+---
+
 ## v0.6.3 — Compact card content centering
 
 **Changed**

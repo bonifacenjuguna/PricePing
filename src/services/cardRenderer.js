@@ -26,7 +26,7 @@ const COMPACT_WIDTH = CARD_WIDTH + COMPACT_PAD * 2;
 // Nudges content further toward center within the same COMPACT_WIDTH/HEIGHT
 // canvas — doesn't change overall card size, just how much of the pad is
 // "used" as inset vs. left as edge margin.
-const COMPACT_EXTRA_INSET = 50;
+const COMPACT_EXTRA_INSET = 90;
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
