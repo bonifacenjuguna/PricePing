@@ -11,7 +11,25 @@ function coinBySymbol(symbol) {
 async function fetchAllPrices() {
   const realPairs = config.coins.filter((c) => c.binancePair).map((c) => c.binancePair);
 
-  const rawPrices = await binance.fetchPrices(realPairs);
+  let rawPrices;
+  try {
+    rawPrices = await binance.fetchPrices(realPairs);
+  } catch (err) {
+    // Binance's batched ticker endpoint rejects the *entire* request if
+    // even one symbol in it is invalid/delisted — /addcoin checks the pair
+    // up front now (see binance.pairExists), but a previously-good pair
+    // could still go bad later (delisting, symbol rename). Falling back to
+    // one request per pair means that degrades to "this one coin has no
+    // price" instead of silently killing every alert until someone notices.
+    logger.warn(`Batched price fetch failed (${err.message}) \u2014 falling back to per-pair requests`);
+    rawPrices = new Map();
+    await Promise.all(
+      realPairs.map(async (pair) => {
+        const price = await binance.fetchSinglePrice(pair);
+        if (price !== null) rawPrices.set(pair, price);
+      })
+    );
+  }
 
   const result = new Map();
 

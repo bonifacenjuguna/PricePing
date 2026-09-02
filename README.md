@@ -29,9 +29,19 @@ complete feature backlog live in [`CHANGELOG.md`](./CHANGELOG.md).
   schedule/rule removal. Replaces the old threshold-only undo from v0.2.0.
   Time-boxed to 15 minutes, keeps the last 8 actions.
 - **Safety rails**: a hard 1-minute cooldown floor, a soft warning when a
-  threshold edit looks unusually large (50×+ the typical default), and a
+  threshold edit looks unusually large (50\u00D7+ the typical default), and a
   typo guard on `/addcoin` that catches near-miss symbols — including
-  letter-swap typos like XPR↔XRP, not just missing/extra letters.
+  letter-swap typos like XPR\u2194XRP, not just missing/extra letters.
+- **Live pair validation on `/addcoin`** — checks the Binance pair
+  actually exists before confirming, instead of trusting whatever's typed.
+  This matters beyond just that one coin: Binance's batched price endpoint
+  (one call fetches every tracked coin's price) rejects the *whole*
+  request if even one symbol in it is invalid, so an unchecked bad pair
+  could silently break price fetching for every coin, not just the new
+  one. `fetchAllPrices()` also now falls back to per-pair requests if the
+  batch ever fails for some other reason (e.g. a previously-good pair
+  gets delisted later), so one bad pair degrades to "that one coin has no
+  price" instead of taking every alert down with it.
 - **Channel validation** — `/addchannel` now confirms the bot can actually
   see the chat before saving; a bad ID is rejected immediately instead of
   failing silently on the first real post.

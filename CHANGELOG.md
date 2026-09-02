@@ -3,6 +3,26 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.5 — Validate Binance pairs before adding
+
+**Fixed**
+- `/addcoin` previously trusted whatever Binance pair was typed, with no
+  check it actually exists. That was riskier than just "the new coin
+  won't work" \u2014 every coin's price is fetched in one batched Binance
+  call, and Binance's batched ticker endpoint rejects the *entire*
+  request if even one symbol in it is invalid. An unchecked bad pair
+  could silently break price fetching (and therefore every alert) for
+  *every* tracked coin, not just the new one.
+- New `binance.pairExists()`: `/addcoin` now checks the pair against
+  Binance directly before showing the confirm screen, and rejects it up
+  front with a clear message if it's not real.
+- `marketData.fetchAllPrices()` now also falls back to per-pair requests
+  if the batched call fails for any other reason (e.g. a previously-good
+  pair gets delisted later) \u2014 degrades to "that one coin has no
+  price" instead of taking every coin down with it.
+
+---
+
 ## v0.7.4 — /coins, /removecoin
 
 **Added**

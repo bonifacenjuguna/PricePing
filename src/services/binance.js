@@ -55,6 +55,43 @@ async function fetchPrices(pairs) {
   }
 }
 
+// Single-symbol price fetch — used by marketData.fetchAllPrices() as a
+// fallback when the batched call above fails outright (a bad/delisted
+// symbol poisons the whole batched request), so one broken pair degrades
+// to "that one coin has no price" instead of "no coin has a price".
+async function fetchSinglePrice(pair) {
+  const { signal, clear } = withTimeout();
+  try {
+    const res = await fetch(`${BASE_URL}/api/v3/ticker/price?symbol=${encodeURIComponent(pair)}`, { signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const price = Number(data && data.price);
+    return Number.isFinite(price) ? price : null;
+  } catch {
+    return null;
+  } finally {
+    clear();
+  }
+}
+
+// Checks one symbol against Binance directly — used by /addcoin before
+// confirming, so a bad/typo'd pair is caught right there instead of later
+// breaking the batched fetchPrices() call for every tracked coin at once
+// (Binance's batched ticker endpoint rejects the whole request if even one
+// symbol in it is invalid — see fetchPrices above).
+async function pairExists(pair) {
+  const { signal, clear } = withTimeout();
+  try {
+    const res = await fetch(`${BASE_URL}/api/v3/ticker/price?symbol=${encodeURIComponent(pair)}`, { signal });
+    return res.ok;
+  } catch (err) {
+    logger.warn(`Could not check Binance pair ${pair}`, { message: err.message });
+    return null; // network/timeout — "couldn't check", not "invalid"
+  } finally {
+    clear();
+  }
+}
+
 // Batched 24hr rolling stats — used for the manual /post card (24h high/
 // low/%), the daily digest, and "big mover of the day". One call for every
 // pair, same batching pattern as fetchPrices.
@@ -132,4 +169,4 @@ async function fetchKlines(pair, interval, limit) {
   }
 }
 
-module.exports = { fetchPrices, fetch24hrStats, fetchKlines };
+module.exports = { fetchPrices, fetch24hrStats, fetchKlines, pairExists, fetchSinglePrice };

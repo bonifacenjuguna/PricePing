@@ -778,11 +778,20 @@ async function stageAddCoin(ctx, parts) {
     return;
   }
 
+  const exists = await binance.pairExists(pair);
+  if (exists === false) {
+    await ctx.reply(
+      `"${pair}" isn't a real Binance pair \u2014 double check it at binance.com/en/markets (usually SYMBOL + USDT, e.g. "${symbol}USDT"). Nothing was added.`
+    );
+    return;
+  }
+  const pairWarning = exists === null ? '\n\u26A0\uFE0F Could not verify this pair with Binance right now \u2014 proceed only if you\u2019re sure it\u2019s correct.' : '';
+
   // Catches "XPR" vs "XRP" style typos before they become a permanently
   // tracked duplicate — only fires on a near-miss (edit distance 1), never
   // on an unrelated short symbol.
   const lookalike = config.coins.find((c) => symbol.length >= 3 && levenshtein(symbol, c.symbol) === 1);
-  const warning = lookalike ? `\n\u26A0\uFE0F This looks similar to already-tracked ${lookalike.symbol} \u2014 double check this isn't a typo.` : '';
+  const warning = (lookalike ? `\n\u26A0\uFE0F This looks similar to already-tracked ${lookalike.symbol} \u2014 double check this isn't a typo.` : '') + pairWarning;
 
   pendingAddCoin = { symbol, name, pair, color };
   await inlineReply(ctx, menu.addCoinConfirm({ symbol, name, pair, color }, warning));
