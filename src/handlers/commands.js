@@ -17,8 +17,10 @@ const rulesDb = require('../db/rules');
 const coinTagsDb = require('../db/coinTags');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
+const customCoinsDb = require('../db/customCoins');
 
 const marketData = require('../services/marketData');
+const feargreed = require('../services/feargreed');
 const binance = require('../services/binance');
 const telegramSender = require('../services/telegramSender');
 const chartRenderer = require('../services/chartRenderer');
@@ -78,7 +80,7 @@ async function help(ctx) {
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
       `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules \u2014 or build a rule with buttons via /commands \u2192 Automation \u2192 Rules \u2192 Add rule\n` +
       `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk threshold/mute via /commands \u2192 Automation \u2192 Bulk actions\n` +
-      `/broadcast CHANNEL message... \u2014 plain text post\n` +
+      `/broadcast CHANNEL message... \u2014 plain text with HTML formatting/links, or /broadcast CHANNEL alone then send any media (photo/video/document/etc.) to post it as-is, no "Forwarded from" tag\n` +
       `/exportconfig \u00B7 /importconfig\n` +
       `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
       `/test [SYMBOL] \u2014 advanced test menu\n` +
@@ -1804,6 +1806,28 @@ async function broadcastCmd(ctx) {
   const parts = ctx.message.text.trim().split(/\s+/);
   const channelName = parts[1];
   const message = parts.slice(2).join(' ');
+
+  if (!channelName) {
+    await ctx.reply(
+      'Usage: /broadcast CHANNEL message text here\n' +
+        'Or /broadcast CHANNEL with nothing after, then send/forward the next message \u2014 text, photo, video, document, voice, GIF, anything \u2014 and I\u2019ll post that instead, formatting and media intact, no "Forwarded from" tag.\n\n' +
+        'Hyperlink in the inline text form: <a href="https://example.com">link text</a> \u2014 <b>bold</b> and <i>italic</i> work too.'
+    );
+    return;
+  }
+  const channel = await channelsDb.resolve(channelName);
+  if (!channel) {
+    await ctx.reply(`Unknown channel: ${channelName}`);
+    return;
+  }
+  if (!message) {
+    const prompt =
+      `Send the content now \u2014 text, photo, video, document, voice, GIF, anything \u2014 and I\u2019ll post it to #${channel.name} exactly as sent, formatting included, with no "Forwarded from" tag.\n\n` +
+      'For a link, use Telegram\u2019s own formatting (select the text \u2192 Create link, or just paste a URL \u2014 it auto-links).';
+    pendingInput.set('broadcastcopy', { channelName: channel.name }, prompt);
+    await ctx.reply(prompt);
+    return;
+  }
   await runBroadcast(ctx, channelName, message);
 }
 async function runBroadcast(ctx, channelName, message) {
@@ -1813,6 +1837,19 @@ async function runBroadcast(ctx, channelName, message) {
   }
   const result = await actions.broadcastMessage(ctx.telegram, channelName, message);
   await ctx.reply(result.message);
+}
+// Used both when the "next message" is text (routed via handleGuidedInput,
+// same as every other pendingInput case) and when it's media (routed via
+// the dedicated bot.on(mediaTypes) listener in bot.js, since photos/
+// videos/etc. never reach the text handler at all).
+async function runBroadcastCopy(ctx, channelName) {
+  const channel = await channelsDb.resolve(channelName);
+  if (!channel) {
+    await ctx.reply(`Channel "${channelName}" no longer exists \u2014 nothing sent.`);
+    return;
+  }
+  const ok = await telegramSender.sendBroadcastCopy(ctx.telegram, ctx.chat.id, ctx.message.message_id, channel.chatId);
+  await ctx.reply(ok ? `Posted to #${channel.name}.` : `Could not post to #${channel.name}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2062,6 +2099,45 @@ async function digestNowCmd(ctx) {
 async function digestNowButton(ctx) {
   await ctx.answerCbQuery('Sending...');
   await digestNowCmd(ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Fear & Greed Index (alternative.me) — their terms require attribution
+// right next to the data, so that's always in the message text below, not
+// optional/removable.
+// ---------------------------------------------------------------------------
+const FEAR_GREED_EMOJI = {
+  'Extreme Fear': '\uD83D\uDD34',
+  Fear: '\uD83D\uDFE0',
+  Neutral: '\uD83D\uDFE1',
+  Greed: '\uD83D\uDFE2',
+  'Extreme Greed': '\uD83D\uDFE2',
+};
+function fearGreedBar(value) {
+  const filled = Math.max(0, Math.min(10, Math.round(value / 10)));
+  return '\u2588'.repeat(filled) + '\u2591'.repeat(10 - filled);
+}
+async function runFearGreed(ctx) {
+  let data;
+  try {
+    data = await feargreed.fetchFearGreed();
+  } catch (err) {
+    await ctx.reply(`Could not fetch the Fear & Greed Index right now: ${err.message}`);
+    return;
+  }
+  const emoji = FEAR_GREED_EMOJI[data.classification] || '\u26AA';
+  const text =
+    `${emoji} <b>Crypto Fear &amp; Greed Index</b>\n${fearGreedBar(data.value)}\n` +
+    `${data.value}/100 \u2014 ${data.classification}\n\n` +
+    `<i>Updated ${format.timeAgo(new Date(data.timestamp))} \u00B7 Data: alternative.me</i>`;
+  await ctx.reply(text, { parse_mode: 'HTML' });
+}
+async function fearGreedCmd(ctx) {
+  await runFearGreed(ctx);
+}
+async function fearGreedScreen(ctx) {
+  await ctx.answerCbQuery();
+  await runFearGreed(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2673,6 +2749,7 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
   if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
   if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
+  if (pending.action === 'broadcastcopy') return runBroadcastCopy(ctx, pending.context.channelName);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
@@ -2814,6 +2891,8 @@ module.exports = {
   ruleWizardCancel,
   moversCmd,
   moversScreen,
+  fearGreedCmd,
+  fearGreedScreen,
   moversPostStart,
   moversPostExecute,
   tagCmd,
@@ -2832,6 +2911,7 @@ module.exports = {
   ruleDel,
   ruleEditStart,
   broadcastCmd,
+  runBroadcastCopy,
   exportConfigCmd,
   importConfigCmd,
   backupMenuScreen,

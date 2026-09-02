@@ -172,6 +172,7 @@ function hub() {
     ],
     [
       { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
+      { text: '\uD83D\uDE28 Fear & Greed', callback_data: 'nav:feargreed' },
     ],
     [
       { text: '\u267B Reset', callback_data: 'nav:reset' },

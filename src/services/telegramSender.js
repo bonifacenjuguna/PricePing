@@ -124,11 +124,35 @@ async function sendBroadcast(telegram, message, channel) {
   return sendMessageWithRetry(telegram, channel.chatId, message);
 }
 
+// /broadcast (rich): copies whatever the admin sent — any message type
+// (photo, video, document, voice, GIF, formatted text with links, ...),
+// original formatting/entities intact — into the target channel via
+// Telegram's copyMessage. Deliberately copyMessage, not forwardMessage:
+// forwardMessage stamps the post with "Forwarded from <source>", which is
+// exactly the tag that shouldn't show up on a channel post that's meant
+// to read as original content.
+async function sendBroadcastCopy(telegram, fromChatId, messageId, toChatId) {
+  const attempts = 1 + config.telegramSendRetries;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await telegram.copyMessage(toChatId, fromChatId, messageId);
+      return true;
+    } catch (err) {
+      logger.warn(`Broadcast copy attempt ${attempt}/${attempts} failed`, { message: err.message });
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(err, attempt)));
+      }
+    }
+  }
+  return false;
+}
+
 module.exports = {
   sendAlert,
   sendManualPost,
   sendChart,
   sendBroadcast,
+  sendBroadcastCopy,
   sendPhotoWithRetry,
   sendMessageWithRetry,
 };

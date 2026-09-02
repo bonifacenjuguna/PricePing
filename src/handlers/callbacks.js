@@ -57,6 +57,8 @@ async function onCallback(ctx) {
           return commands.rulesScreen(ctx);
         case 'movers':
           return commands.moversScreen(ctx);
+        case 'feargreed':
+          return commands.fearGreedScreen(ctx);
         case 'tags':
           return commands.tagsScreen(ctx);
         case 'coinsettings':

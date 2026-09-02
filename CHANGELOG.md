@@ -3,6 +3,32 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.7 — Critical fix: missing require broke /coins and coin settings; rich broadcast; Fear & Greed
+
+**Fixed \u2014 the important one**
+- `customCoinsDb` was used throughout `commands.js` (`/coins`, clicking a
+  coin in Coin settings, `/removecoin`) but never actually `require()`'d
+  in that file. Every one of those threw a silent `ReferenceError` server
+  -side \u2014 nothing visibly happened on tap, `/coins` did nothing.
+  This has been broken since v0.7.4. Fixed by adding the missing
+  `require`. Re-scanned every DB/service reference across the whole
+  `src/` tree for the same class of bug \u2014 this was the only one.
+
+**Added**
+- `/broadcast` now supports any media type, not just plain text: `/broadcast
+  CHANNEL` alone (nothing after) puts it in "waiting for content" mode \u2014
+  send/forward the next message, text or photo/video/document/voice/GIF/
+  anything, and it's copied into the channel exactly as sent, formatting
+  intact, via Telegram's `copyMessage` rather than `forwardMessage` \u2014
+  which means no "Forwarded from" tag. The inline form (`/broadcast
+  CHANNEL text right here`) still works for quick plain-text posts, and
+  now documents how to add a hyperlink: `<a href="https://example.com">link
+  text</a>` (also `<b>bold</b>`, `<i>italic</i>`).
+- `/feargreed` (or `/fng`), also its own hub button: the Crypto Fear &
+  Greed Index from alternative.me, with attribution per their terms.
+
+---
+
 ## v0.7.6 — Remove-from-settings, bulk /addcoin, Movers promoted, pair clarity
 
 **Added**

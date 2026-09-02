@@ -8,6 +8,7 @@ const { accessGate } = require('./handlers/middleware');
 const commands = require('./handlers/commands');
 const callbacks = require('./handlers/callbacks');
 const text = require('./handlers/text');
+const pendingInput = require('./services/pendingInput');
 
 const settingsDb = require('./db/settings');
 const eventsDb = require('./db/events');
@@ -87,6 +88,8 @@ bot.command('schedules', commands.schedulesListCmd);
 bot.command('addrule', commands.ruleCmd);
 bot.command('rules', commands.rulesListCmd);
 bot.command('movers', commands.moversCmd);
+bot.command('feargreed', commands.fearGreedCmd);
+bot.command('fng', commands.fearGreedCmd);
 bot.command('tag', commands.tagCmd);
 bot.command('untag', commands.untagCmd);
 bot.command('tags', commands.tagsCmd);
@@ -105,6 +108,18 @@ bot.on('callback_query', callbacks.onCallback);
 
 // --- Persistent bottom keyboard (BBTB) taps + guided input + bare symbols + anything else typed ---
 bot.on('text', text.onText);
+
+// --- Non-text media as the "next message" for /broadcast's copy flow ---
+// (photos/videos/documents/etc. never reach the text handler above at
+// all, so a /broadcast CHANNEL prompt waiting on media needs its own
+// listener). Anything that arrives with no matching pending broadcast is
+// silently ignored, same as any other unhandled message type today.
+bot.on(['photo', 'video', 'document', 'voice', 'audio', 'animation', 'video_note'], async (ctx) => {
+  const pending = pendingInput.get();
+  if (!pending || pending.action !== 'broadcastcopy') return undefined;
+  pendingInput.clear();
+  return commands.runBroadcastCopy(ctx, pending.context.channelName);
+});
 
 bot.catch((err, ctx) => {
   logger.error('Unhandled Telegraf error', { message: err.message, update: ctx.updateType });

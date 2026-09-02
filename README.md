@@ -297,7 +297,8 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
 | Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |
 | Movers | `/movers [tag:NAME]` \u2014 also its own top-level button (not nested under Automation), with a "Post to channel" action |
-| Broadcast | `/broadcast CHANNEL message text` |
+| Broadcast | `/broadcast CHANNEL message text` (HTML formatting/links via `<a href="...">`, `<b>`, `<i>`) \u2014 or `/broadcast CHANNEL` alone, then send any photo/video/document/voice/GIF and it's copied as-is (no "Forwarded from" tag) |
+| Market sentiment | `/feargreed` / `/fng` \u2014 Crypto Fear & Greed Index (alternative.me), also its own hub button |
 | Backup | `/exportconfig` `/importconfig` |
 | Reset | `/reset [thresholds\|milestones\|cooldowns\|captions\|vars\|channels\|automation\|everything]` |
 | Stats | `/stats` `/digestnow` |
