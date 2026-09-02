@@ -64,6 +64,7 @@ bot.command('setmilestone', commands.setMilestoneCmd);
 bot.command('setcooldown', commands.setCooldownCmd);
 bot.command('resetcooldown', commands.resetCooldownCmd);
 bot.command('addcoin', commands.addCoinCmd);
+bot.command('addcoins', commands.addCoinCmd);
 bot.command('removecoin', commands.removeCoinCmd);
 bot.command('coins', commands.coinListScreen);
 bot.command('history', commands.historyCmd);

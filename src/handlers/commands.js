@@ -70,7 +70,7 @@ async function help(ctx) {
       `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
-      `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL \u00B7 /coins \u2014 see everything tracked, which are custom\n` +
+      `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL \u00B7 /coins \u2014 see everything tracked, which are custom \u00B7 paste several lines at once to bulk-add\n` +
       `/history SYMBOL [channel]\n` +
       `/stats\n` +
       `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
@@ -328,13 +328,14 @@ async function coinSettingsScreen(ctx, symbol) {
     await ctx.answerCbQuery('Unknown coin');
     return;
   }
-  const [threshold, milestoneMap, cooldownOverrides, states, globallyPaused, lastAlerts] = await Promise.all([
+  const [threshold, milestoneMap, cooldownOverrides, states, globallyPaused, lastAlerts, customCoins] = await Promise.all([
     thresholdsDb.get(symbol),
     milestonesDb.getAll(),
     cooldownsDb.getAll(),
     coinStateDb.getAll(),
     settingsDb.isPaused(),
     alertsLogDb.recentForSymbol(symbol, 1),
+    customCoinsDb.getAll(),
   ]);
   const milestone = milestoneMap.get(symbol) || { step: coin.milestoneStep, isCustom: false, isDisabled: false };
   const isDefaultCooldown = cooldownOverrides[symbol] === undefined;
@@ -343,9 +344,10 @@ async function coinSettingsScreen(ctx, symbol) {
   const lastAlertText = lastAlerts.length
     ? `${format.timeAgo(lastAlerts[0].created_at)} (${lastAlerts[0].alert_type})`
     : null;
+  const isCustom = customCoins.some((c) => c.symbol === symbol);
   await inlineEdit(
     ctx,
-    menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText })
+    menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, isCustom })
   );
 }
 
@@ -732,11 +734,24 @@ async function postChartCmd(ctx) {
 // Coins — /addcoin now confirm-before-create
 // ---------------------------------------------------------------------------
 async function addCoinCmd(ctx) {
-  const parts = ctx.message.text.trim().split(/\s+/);
-  await stageAddCoin(ctx, parts.slice(1));
+  // Strip the leading /addcoin(s) so pasting a whole block of "/addcoin ..."
+  // lines (which is what someone naturally does when copying several of
+  // these out of notes) is handled as one call, not just the first line —
+  // Telegram delivers that whole paste as a single message.
+  const raw = ctx.message.text.replace(/^\/addcoins?(@\w+)?\s*/, '');
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length > 1) {
+    await runBulkAddCoins(ctx, lines);
+    return;
+  }
+  await stageAddCoin(ctx, (lines[0] || '').split(/\s+/));
 }
 async function addCoinStart(ctx) {
-  const prompt = 'Send: SYMBOL BINANCEPAIR #HEXCOLOR [Name]\nExample: ADA ADAUSDT #0033AD Cardano';
+  const prompt =
+    'Send: SYMBOL BINANCEPAIR #HEXCOLOR [Name]\nExample: ADA ADAUSDT #0033AD Cardano\n\nOr paste several, one per line, to add them all at once (already-tracked ones are skipped automatically).';
   pendingInput.set('addcoin', {}, prompt);
   await ctx.answerCbQuery();
   await ctx.reply(prompt);
@@ -773,8 +788,17 @@ async function stageAddCoin(ctx, parts) {
     await ctx.reply('Usage: SYMBOL BINANCEPAIR #HEXCOLOR [Name]\nExample: ADA ADAUSDT #0033AD Cardano');
     return;
   }
-  if (findCoin(symbol)) {
-    await ctx.reply(`${symbol} is already tracked.`);
+  const existing = findCoin(symbol);
+  if (existing) {
+    // A coin is keyed by symbol only, not by which quote currency it's
+    // paired against — so /addcoin BTC BTCUSDC when BTC is already tracked
+    // via BTCUSDT correctly gets blocked here rather than silently
+    // creating a second, conflicting "BTC". Naming the existing pair makes
+    // that clear instead of a bare "already tracked".
+    const existingPair = existing.binancePair || (existing.impliedFromInverse ? `implied from ${existing.impliedFromInverse}` : 'n/a');
+    await ctx.reply(
+      `${symbol} is already tracked (paired via ${existingPair}). One symbol can only track one pair at a time \u2014 /removecoin ${symbol} first if you want to switch it to ${pair}.`
+    );
     return;
   }
 
@@ -795,6 +819,82 @@ async function stageAddCoin(ctx, parts) {
 
   pendingAddCoin = { symbol, name, pair, color };
   await inlineReply(ctx, menu.addCoinConfirm({ symbol, name, pair, color }, warning));
+}
+
+// Bulk add — one line per coin, same "SYMBOL PAIR #COLOR [Name]" format
+// (an optional leading "/addcoin " per line is tolerated, since that's
+// the natural way to paste a batch someone already has written that way).
+// Skips the per-coin confirm screen (doesn't scale to a 20-line paste) but
+// is non-destructive by construction: it only ever adds new symbols,
+// never touches an existing one — an already-tracked symbol is reported
+// and left completely alone, never overwritten.
+async function runBulkAddCoins(ctx, lines) {
+  const specs = lines.map((line) => {
+    const cleaned = line.replace(/^\/addcoins?(@\w+)?\s*/, '').trim();
+    const parts = cleaned.split(/\s+/);
+    return {
+      raw: line,
+      symbol: (parts[0] || '').toUpperCase(),
+      pair: (parts[1] || '').toUpperCase(),
+      color: parts[2] || '',
+      name: parts.slice(3).join(' ') || (parts[0] || '').toUpperCase(),
+    };
+  });
+
+  await ctx.reply(`Checking ${specs.length} coin(s)...`);
+
+  const badFormat = [];
+  const alreadyTracked = [];
+  const invalidPair = [];
+  const toAdd = [];
+
+  for (const spec of specs) {
+    if (!spec.symbol || !spec.pair || !/^#[0-9A-Fa-f]{6}$/.test(spec.color)) {
+      badFormat.push(spec.raw);
+      continue;
+    }
+    const existing = findCoin(spec.symbol);
+    if (existing) {
+      const existingPair = existing.binancePair || (existing.impliedFromInverse ? `implied from ${existing.impliedFromInverse}` : 'n/a');
+      alreadyTracked.push(`${spec.symbol} (already via ${existingPair})`);
+      continue;
+    }
+    // Also catches the same symbol appearing twice within this same paste.
+    if (toAdd.find((s) => s.symbol === spec.symbol)) {
+      alreadyTracked.push(`${spec.symbol} (duplicate line in this batch)`);
+      continue;
+    }
+    const exists = await binance.pairExists(spec.pair);
+    if (exists === false) {
+      invalidPair.push(`${spec.symbol} (${spec.pair} isn't a real Binance pair)`);
+      continue;
+    }
+    toAdd.push(spec);
+  }
+
+  const added = [];
+  const failed = [];
+  for (const spec of toAdd) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await coinRegistry.addCoin({ symbol: spec.symbol, name: spec.name, binancePair: spec.pair, color: spec.color });
+      added.push(spec.symbol);
+    } catch (err) {
+      failed.push(`${spec.symbol} (${err.message})`);
+    }
+  }
+  if (added.length) {
+    eventsDb.recordAudit(`bulk-added ${added.length} coin(s): ${added.join(', ')}`).catch(() => {});
+  }
+
+  const parts = [];
+  parts.push(`\u2705 Added (${added.length}): ${added.length ? added.join(', ') : 'none'}`);
+  if (alreadyTracked.length) parts.push(`\u23ED Already tracked, skipped (${alreadyTracked.length}):\n${alreadyTracked.join('\n')}`);
+  if (invalidPair.length) parts.push(`\u274C Invalid Binance pair, skipped (${invalidPair.length}):\n${invalidPair.join('\n')}`);
+  if (failed.length) parts.push(`\u26A0\uFE0F Failed while adding (${failed.length}):\n${failed.join('\n')}`);
+  if (badFormat.length) parts.push(`\u2753 Couldn't parse, skipped (${badFormat.length}):\n${badFormat.join('\n')}`);
+
+  await ctx.reply(parts.join('\n\n'));
 }
 async function addCoinConfirmExecute(ctx) {
   if (!pendingAddCoin) {
@@ -1966,18 +2066,17 @@ async function digestNowButton(ctx) {
 
 // ---------------------------------------------------------------------------
 // Movers — top gainers/losers across tracked coins (optionally scoped to a
-// tag). Reuses the same 24hr stats batch the digest uses.
+// tag). Reuses the same 24hr stats batch the digest uses. Own top-level hub
+// button (not nested under Automation) since it's something you look at
+// and act on directly, not a recurring/background thing.
 // ---------------------------------------------------------------------------
-async function runMovers(ctx, tagArg) {
+async function buildMoversText(tagArg) {
   let symbols = config.coins.map((c) => c.symbol);
   let scopeLabel = 'all tracked coins';
   if (tagArg) {
     symbols = await coinTagsDb.getSymbolsForTag(tagArg);
     scopeLabel = `#${tagArg}`;
-    if (!symbols.length) {
-      await ctx.reply(`No coins tagged "${tagArg}". /tags to see what exists.`);
-      return;
-    }
+    if (!symbols.length) return { error: `No coins tagged "${tagArg}". /tags to see what exists.` };
   }
 
   let priceMap;
@@ -1985,8 +2084,7 @@ async function runMovers(ctx, tagArg) {
   try {
     [priceMap, statsMap] = await Promise.all([marketData.fetchAllPrices(), marketData.fetchAll24hrStats()]);
   } catch {
-    await ctx.reply('Could not reach Binance right now \u2014 try again shortly.');
-    return;
+    return { error: 'Could not reach Binance right now \u2014 try again shortly.' };
   }
 
   const rows = symbols
@@ -2001,8 +2099,7 @@ async function runMovers(ctx, tagArg) {
     .sort((a, b) => b.pct - a.pct);
 
   if (!rows.length) {
-    await ctx.reply('No movers data available right now (need at least one non-stable tracked coin with 24h stats).');
-    return;
+    return { error: 'No movers data available right now (need at least one non-stable tracked coin with 24h stats).' };
   }
 
   const line = (r) =>
@@ -2017,16 +2114,53 @@ async function runMovers(ctx, tagArg) {
     `\uD83D\uDCCA <b>Movers</b> \u2014 24h \u00B7 ${scopeLabel}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `\uD83D\uDFE2 Gainers\n${gainers.length ? gainers.map(line).join('\n') : '(none)'}\n\n` +
     `\uD83D\uDD34 Losers\n${losers.length ? losers.map(line).join('\n') : '(none)'}`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
+  return { text };
+}
+async function runMovers(ctx, tagArg, { withPostButton = false } = {}) {
+  const { text, error } = await buildMoversText(tagArg);
+  if (error) {
+    await ctx.reply(error);
+    return;
+  }
+  const extra = { parse_mode: 'HTML' };
+  if (withPostButton) {
+    extra.reply_markup = { inline_keyboard: [[{ text: '\uD83D\uDCE4 Post to channel', callback_data: `movers:poststart:${tagArg || 'all'}` }]] };
+  }
+  await ctx.reply(text, extra);
 }
 async function moversCmd(ctx) {
   const argRaw = (ctx.message.text.split(/\s+/)[1] || '').trim();
   const tagArg = argRaw.toLowerCase().startsWith('tag:') ? argRaw.slice(4).toLowerCase() : null;
-  await runMovers(ctx, tagArg);
+  await runMovers(ctx, tagArg, { withPostButton: true });
 }
 async function moversScreen(ctx) {
   await ctx.answerCbQuery();
-  await runMovers(ctx, null);
+  await runMovers(ctx, null, { withPostButton: true });
+}
+async function moversPostStart(ctx, tagArg) {
+  await ctx.answerCbQuery();
+  const channels = await channelsDb.getAll();
+  await inlineReply(ctx, menu.moversChannelPicker(tagArg, channels));
+}
+async function moversPostExecute(ctx, tagArg, channelName) {
+  await ctx.answerCbQuery('Posting...');
+  const tag = tagArg === 'all' ? null : tagArg;
+  const { text, error } = await buildMoversText(tag);
+  if (error) {
+    await ctx.reply(error);
+    return;
+  }
+  const channel = await channelsDb.get(channelName);
+  if (!channel) {
+    await ctx.reply(`Channel "${channelName}" not found.`);
+    return;
+  }
+  try {
+    await ctx.telegram.sendMessage(channel.chatId, text, { parse_mode: 'HTML' });
+    await ctx.reply(`Posted movers to #${channelName}.`);
+  } catch (err) {
+    await ctx.reply(`Could not post to #${channelName}: ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2524,7 +2658,11 @@ async function handleGuidedInput(ctx, pending) {
 
   const parts = text.split(/\s+/);
 
-  if (pending.action === 'addcoin') return stageAddCoin(ctx, parts);
+  if (pending.action === 'addcoin') {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 1) return runBulkAddCoins(ctx, lines);
+    return stageAddCoin(ctx, lines[0] ? lines[0].split(/\s+/) : []);
+  }
   if (pending.action === 'addchannel') return runAddChannel(ctx, parts);
   if (pending.action === 'addvar') return runSetVar(ctx, parts[0], parts.slice(1).join(' '));
   if (pending.action === 'addschedule') return runAddSchedule(ctx, parts);
@@ -2676,6 +2814,8 @@ module.exports = {
   ruleWizardCancel,
   moversCmd,
   moversScreen,
+  moversPostStart,
+  moversPostExecute,
   tagCmd,
   untagCmd,
   tagsCmd,

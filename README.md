@@ -102,11 +102,28 @@ them has to be added, there's no separate "pre-added" list beyond this.
 
 More can be added at runtime with `/addcoin SYMBOL PAIR #COLOR [Name]`
 (confirm required, no redeploy) — or the button flow: `/commands` \u2192
-Coin settings \u2192 Add coin. `/coins` (or Coin settings \u2192 View all
-coins) shows everything currently tracked and marks which ones were
-custom-added. Those can be removed again with `/removecoin SYMBOL` or the
-\u2716 button next to it in that list \u2014 the original 10 can't be
-removed this way, only ones added via `/addcoin`.
+Coin settings \u2192 Add coin. Also removable directly from that coin's
+settings screen now, not just from the `/coins` list. `/coins` (or Coin
+settings \u2192 View all coins) shows everything currently tracked and
+marks which ones were custom-added. Those can be removed again with
+`/removecoin SYMBOL` or the \u2716 button next to it in that list \u2014
+the original 10 can't be removed this way, only ones added via
+`/addcoin`.
+
+**Adding several at once**: paste multiple `SYMBOL PAIR #COLOR [Name]`
+lines in one message (an `/addcoin` or `/addcoins` prefix per line is
+fine too, if that's how you already have them written — handy for
+pasting a batch straight out of notes). Each line is checked
+independently: already-tracked symbols are reported and left alone,
+never overwritten; each new pair is verified against Binance before
+being added; results come back as one summary (added / already tracked /
+invalid pair / couldn't parse). A symbol is matched only by its own name,
+not by which quote currency it's paired against — `/addcoin BTC BTCUSDC`
+when BTC is already tracked via BTCUSDT is correctly rejected as
+already-tracked (naming the existing pair), rather than silently
+creating a second, conflicting BTC entry. To point an existing coin at a
+different quote pair, `/removecoin` it first, then re-add with the new
+pair.
 
 ## Start here: `/commands`
 
@@ -278,7 +295,8 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required) `/removecoin SYMBOL` `/coins` `/history SYMBOL [channel]` |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
-| Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/movers [tag:NAME]` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |
+| Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |
+| Movers | `/movers [tag:NAME]` \u2014 also its own top-level button (not nested under Automation), with a "Post to channel" action |
 | Broadcast | `/broadcast CHANNEL message text` |
 | Backup | `/exportconfig` `/importconfig` |
 | Reset | `/reset [thresholds\|milestones\|cooldowns\|captions\|vars\|channels\|automation\|everything]` |

@@ -383,6 +383,13 @@ async function onCallback(ctx) {
       return undefined;
     }
 
+    // ---- movers:poststart:TAG|all, movers:postto:TAG|all:CHANNEL ----
+    if (ns === 'movers') {
+      if (a1 === 'poststart') return commands.moversPostStart(ctx, a2);
+      if (a1 === 'postto') return commands.moversPostExecute(ctx, a2, a3);
+      return undefined;
+    }
+
     // ---- tag:view|addstart|addcoin ----
     if (ns === 'tag') {
       if (a1 === 'view') return commands.tagDetailScreen(ctx, a2);

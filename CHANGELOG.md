@@ -3,6 +3,33 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.6 — Remove-from-settings, bulk /addcoin, Movers promoted, pair clarity
+
+**Added**
+- Coin settings screen now has a \uD83D\uDDD1 Remove coin button directly
+  on it (for custom-added coins), not just via the separate `/coins` list.
+- `/addcoin` (and the new `/addcoins` alias) now accepts several lines at
+  once, one coin per line \u2014 handy for pasting a whole batch. Each line
+  is independently checked: already-tracked symbols are reported and left
+  completely alone (never overwritten), each new pair is validated
+  against Binance, and one summary comes back at the end (added / already
+  tracked / invalid pair / couldn't parse). Non-destructive by
+  construction \u2014 it only ever adds, never touches an existing coin.
+- Movers is now its own top-level hub button (previously nested under
+  Automation), and its screen now has a "Post to channel" action \u2014
+  pick a channel and it posts the same summary there instead of just
+  showing it privately.
+
+**Changed**
+- The "already tracked" rejection on `/addcoin` now names which pair the
+  symbol is already tracked under, since a symbol is matched by name only
+  \u2014 not by quote currency. `/addcoin BTC BTCUSDC` while BTC is
+  already tracked via BTCUSDT is correctly rejected (a coin can only track
+  one pair at a time), and the message now says so explicitly instead of
+  a bare "already tracked."
+
+---
+
 ## v0.7.5 — Validate Binance pairs before adding
 
 **Fixed**

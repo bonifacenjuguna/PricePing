@@ -171,6 +171,9 @@ function hub() {
       { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
     ],
     [
+      { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
+    ],
+    [
       { text: '\u267B Reset', callback_data: 'nav:reset' },
     ],
     HOME_ROW,
@@ -279,7 +282,7 @@ function thresholdEdit(symbol, threshold) {
 }
 
 // ---------- Unified coin settings screen ----------
-function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, hasCoinPostButton = true }) {
+function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, hasCoinPostButton = true, isCustom = false }) {
   const tStr = threshold ? (threshold.type === 'pct' ? `${threshold.value}%` : `$${format.formatChangeUsd(threshold.value)}`) : '\u2014';
   const mStr = milestone.isDisabled ? 'off' : milestone.step ? `$${format.formatChangeUsd(milestone.step)}${milestone.isCustom ? ' (custom)' : ' (default)'}` : '\u2014';
   const cStr = `${cooldownMinutes}m${isDefaultCooldown ? ' (default)' : ' (custom)'}`;
@@ -315,6 +318,7 @@ function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefault
     isDefaultCooldown ? [] : [{ text: '\u21A9 Reset cooldown to default', callback_data: `cooldown:reset:${symbol}` }],
     [{ text: '\uD83D\uDD07 Mute', callback_data: `mute:coin:${symbol}` }],
     [{ text: '\uD83D\uDCDC History', callback_data: `history:coin:${symbol}` }],
+    isCustom ? [{ text: '\uD83D\uDDD1 Remove coin', callback_data: `removecoin:pick:${symbol}` }] : [],
     ...footer('nav:thresholds'),
   ].filter((row) => row.length);
 
@@ -385,7 +389,6 @@ function automationHub() {
     [{ text: '\uD83D\uDCC5 Schedules', callback_data: 'nav:schedules' }],
     [{ text: '\u26A1 Rules', callback_data: 'nav:rules' }],
     [{ text: '\uD83D\uDCCA Send digest now', callback_data: 'digest:now' }],
-    [{ text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' }],
     [
       { text: '\uD83E\uDDF0 Bulk actions', callback_data: 'bulk:start' },
       { text: '\uD83C\uDFF7 Tags', callback_data: 'nav:tags' },
@@ -607,6 +610,11 @@ function bulkWizardScope(s, tags) {
 function bulkWizardMuteDuration(s) {
   const text = `${bulkWizardSummary(s)}\n\nMute for how long?`;
   return { text, keyboard: durationPicker('bulk:mutedur', [backRow('nav:automation')]) };
+}
+
+function moversChannelPicker(tagArg, channels) {
+  const text = 'Post this movers summary to which channel?';
+  return { text, keyboard: channelPicker(`movers:postto:${tagArg}`, channels, [backRow('nav:movers')]) };
 }
 
 // ---------- Channels ----------
@@ -1016,6 +1024,7 @@ module.exports = {
   bulkWizardScope,
   bulkWizardMuteDuration,
   bulkWizardSummary,
+  moversChannelPicker,
   channelList,
   channelTypePicker,
   channelTypeDefaultPicker,
