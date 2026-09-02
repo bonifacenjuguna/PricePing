@@ -34,4 +34,8 @@ async function allTags() {
   return rows.map((r) => ({ tag: r.tag, coinCount: r.coin_count }));
 }
 
-module.exports = { add, remove, getForSymbol, getSymbolsForTag, allTags };
+async function removeAllForSymbol(symbol) {
+  await pool.query('DELETE FROM coin_tags WHERE symbol = $1', [symbol]);
+}
+
+module.exports = { add, remove, getForSymbol, getSymbolsForTag, allTags, removeAllForSymbol };

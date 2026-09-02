@@ -61,6 +61,8 @@ async function onCallback(ctx) {
           return commands.tagsScreen(ctx);
         case 'coinsettings':
           return commands.coinSettingsMenuScreen(ctx);
+        case 'coinlist':
+          return commands.coinListScreen(ctx);
         case 'milestones':
           return commands.milestonesScreen(ctx);
         case 'history':
@@ -432,6 +434,14 @@ async function onCallback(ctx) {
       if (a1 === 'cancel') {
         return commands.addCoinCancel(ctx);
       }
+      return undefined;
+    }
+
+    // ---- removecoin:pick|confirm|cancel ----
+    if (ns === 'removecoin') {
+      if (a1 === 'pick') return commands.removeCoinPick(ctx, a2);
+      if (a1 === 'confirm') return commands.removeCoinConfirmExecute(ctx);
+      if (a1 === 'cancel') return commands.removeCoinCancel(ctx);
       return undefined;
     }
 

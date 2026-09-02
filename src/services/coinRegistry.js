@@ -5,13 +5,24 @@ const sharp = require('sharp');
 const config = require('../config');
 const logger = require('../utils/logger');
 const customCoinsDb = require('../db/customCoins');
+const coinTagsDb = require('../db/coinTags');
 const thresholdsDb = require('../db/thresholds');
+const { coins: builtInCoins } = require('../coins');
 const { resolveLogoSvg } = require('../utils/logoFetch');
 
 // Keep in sync with scripts/prepare-assets.js — same reasoning: cards
 // composite this onto a 3x-supersampled canvas now (see cardRenderer.js),
 // so the source needs real detail at that scale, not an upscaled 256px.
 const LOGO_SIZE = 512;
+
+// Snapshot of the original 10 shipped-with-the-bot symbols, captured here
+// at require time — before loadCustomCoins()/addCoin() ever mutate
+// config.coins (which is the SAME array object as this raw coins.js
+// export, not a copy — so we can't tell built-in from custom by checking
+// config.coins later, only by checking this snapshot taken before any
+// custom coin was ever appended). Used to keep /removecoin from deleting
+// one of the originals.
+const BUILT_IN_SYMBOLS = new Set(builtInCoins.map((c) => c.symbol));
 
 // config.coins is the SAME array object every other module already holds a
 // reference to (marketData.js, poller.js, commands.js, menu.js, ...).
@@ -83,4 +94,33 @@ async function addCoin({ symbol, name, binancePair, color, isStable, defaultThre
   return { coin, logoSource };
 }
 
-module.exports = { loadCustomCoins, addCoin };
+// Undoes /addcoin. Only ever targets a coin that was itself added via
+// /addcoin — the original 10 in coins.js aren't removable this way (they
+// have thresholds/milestones/defaults wired in more deeply, and accidental
+// removal of e.g. BTC would be a much bigger deal than an experimental
+// custom coin).
+async function removeCoin(symbolRaw) {
+  const symbol = (symbolRaw || '').toUpperCase();
+  if (BUILT_IN_SYMBOLS.has(symbol)) {
+    throw new Error(`${symbol} is one of the bot's original coins and can't be removed this way.`);
+  }
+  const idx = config.coins.findIndex((c) => c.symbol === symbol);
+  if (idx === -1) {
+    throw new Error(`${symbol} isn't tracked.`);
+  }
+
+  config.coins.splice(idx, 1);
+  await customCoinsDb.remove(symbol);
+  await coinTagsDb.removeAllForSymbol(symbol);
+
+  const pngPath = path.join(config.logosDir, `${symbol.toLowerCase()}.png`);
+  try {
+    if (fs.existsSync(pngPath)) fs.unlinkSync(pngPath);
+  } catch (err) {
+    logger.warn(`Could not remove logo file for ${symbol}`, { message: err.message });
+  }
+
+  logger.info(`Removed custom coin ${symbol} (via /removecoin)`);
+}
+
+module.exports = { loadCustomCoins, addCoin, removeCoin };

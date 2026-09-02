@@ -70,7 +70,7 @@ async function help(ctx) {
       `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
-      `/addcoin SYMBOL PAIR #COLOR [Name]\n` +
+      `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL \u00B7 /coins \u2014 see everything tracked, which are custom\n` +
       `/history SYMBOL [channel]\n` +
       `/stats\n` +
       `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
@@ -809,6 +809,61 @@ async function addCoinCancel(ctx) {
   pendingAddCoin = null;
   await ctx.answerCbQuery('Cancelled');
   await ctx.reply('Cancelled — nothing added.');
+}
+
+// ---------------------------------------------------------------------------
+// Remove a custom-added coin (symmetric with /addcoin). Built-in coins
+// aren't removable this way — see coinRegistry.removeCoin for why.
+// ---------------------------------------------------------------------------
+let pendingRemoveCoin = null; // single-admin bot — one removal confirmation in flight at a time
+
+async function coinListScreen(ctx) {
+  const custom = await customCoinsDb.getAll();
+  const customSymbols = new Set(custom.map((c) => c.symbol));
+  await inlineEdit(ctx, menu.coinList(config.coins, customSymbols));
+}
+async function removeCoinCmd(ctx) {
+  const symbol = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase();
+  await stageRemoveCoin(ctx, symbol);
+}
+async function removeCoinPick(ctx, symbol) {
+  await ctx.answerCbQuery();
+  await stageRemoveCoin(ctx, symbol);
+}
+async function stageRemoveCoin(ctx, symbol) {
+  const coin = findCoin(symbol);
+  if (!coin) {
+    await ctx.reply(`${symbol || '(none)'} isn't tracked. /coins to see the full list.`);
+    return;
+  }
+  const custom = await customCoinsDb.getAll();
+  if (!custom.find((c) => c.symbol === symbol)) {
+    await ctx.reply(`${symbol} is one of the bot's original coins and can't be removed this way.`);
+    return;
+  }
+  pendingRemoveCoin = symbol;
+  await inlineReply(ctx, menu.removeCoinConfirm(symbol));
+}
+async function removeCoinConfirmExecute(ctx) {
+  if (!pendingRemoveCoin) {
+    await ctx.answerCbQuery('Nothing pending');
+    return;
+  }
+  await ctx.answerCbQuery('Removing...');
+  const symbol = pendingRemoveCoin;
+  pendingRemoveCoin = null;
+  try {
+    await coinRegistry.removeCoin(symbol);
+    eventsDb.recordAudit(`removed coin ${symbol}`).catch(() => {});
+    await ctx.reply(`${symbol} removed \u2014 no longer tracked, and its thresholds/tags are cleared.`);
+  } catch (err) {
+    await ctx.reply(`Could not remove ${symbol}: ${err.message}`);
+  }
+}
+async function removeCoinCancel(ctx) {
+  pendingRemoveCoin = null;
+  await ctx.answerCbQuery('Cancelled');
+  await ctx.reply('Cancelled — nothing removed.');
 }
 
 async function historyMenuScreen(ctx) {
@@ -2543,6 +2598,11 @@ module.exports = {
   addCoinStart,
   addCoinConfirmExecute,
   addCoinCancel,
+  coinListScreen,
+  removeCoinCmd,
+  removeCoinPick,
+  removeCoinConfirmExecute,
+  removeCoinCancel,
   historyCmd,
   historyMenuScreen,
   historyCoinScreen,

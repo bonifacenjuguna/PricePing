@@ -85,9 +85,18 @@ just that the code parses.
 
 ## Coins tracked
 
-BTC, ETH, USDT, XRP, BNB, USDC, SOL, TRX, DOGE, XAUT out of the box — see
-`src/coins.js` for brand colors, Binance pairs, and default thresholds/
-milestone steps. More can be added at runtime with `/addcoin`, no redeploy.
+BTC, ETH, USDT, XRP, BNB, USDC, SOL, TRX, DOGE, XAUT ship with the bot out
+of the box — see `src/coins.js` for brand colors, Binance pairs, and
+default thresholds/milestone steps. These 10 are baked in; anything past
+them has to be added, there's no separate "pre-added" list beyond this.
+
+More can be added at runtime with `/addcoin SYMBOL PAIR #COLOR [Name]`
+(confirm required, no redeploy) — or the button flow: `/commands` \u2192
+Coin settings \u2192 Add coin. `/coins` (or Coin settings \u2192 View all
+coins) shows everything currently tracked and marks which ones were
+custom-added. Those can be removed again with `/removecoin SYMBOL` or the
+\u2716 button next to it in that list \u2014 the original 10 can't be
+removed this way, only ones added via `/addcoin`.
 
 ## Start here: `/commands`
 
@@ -256,7 +265,7 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Thresholds & milestones | `/thresholds` `/setthreshold SYMBOL AMOUNT [pct]` `/milestones` `/setmilestone SYMBOL STEP\|off` |
 | Cooldown | `/setcooldown SYMBOL MINUTES` `/resetcooldown SYMBOL` |
 | Pause / mute | `/pause [duration]` `/resume` `/mute SYMBOL [duration]` `/unmute SYMBOL` |
-| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required) `/history SYMBOL [channel]` |
+| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required) `/removecoin SYMBOL` `/coins` `/history SYMBOL [channel]` |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
 | Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/movers [tag:NAME]` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |

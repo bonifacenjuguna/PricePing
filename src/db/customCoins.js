@@ -23,4 +23,8 @@ async function add({ symbol, name, binancePair, color, isStable }) {
   );
 }
 
-module.exports = { getAll, add };
+async function remove(symbol) {
+  await pool.query('DELETE FROM custom_coins WHERE symbol = $1', [symbol]);
+}
+
+module.exports = { getAll, add, remove };

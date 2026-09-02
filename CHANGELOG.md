@@ -3,6 +3,22 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.4 — /coins, /removecoin
+
+**Added**
+- `/coins` (or Coin settings \u2192 View all coins): lists every tracked
+  coin and marks which were added via `/addcoin` vs. the original 10.
+  There was previously no single place to see the full list.
+- `/removecoin SYMBOL` (with confirm, same pattern as `/addcoin`), or the
+  \u2716 button next to a coin in `/coins`. Only removes coins that were
+  themselves added via `/addcoin` \u2014 the original 10 in `coins.js`
+  aren't removable this way. Cleans up the coin's threshold-default row,
+  tags, and downloaded logo file along with it.
+- `src/services/coinRegistry.js`: new `removeCoin()`, symmetric with the
+  existing `addCoin()`.
+
+---
+
 ## v0.7.3 — Coin tags, movers summary, bulk actions
 
 **Added**

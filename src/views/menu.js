@@ -728,10 +728,35 @@ function coinSettingsMenu(recentSymbols = []) {
     extraRows: [
       [
         { text: '\uD83C\uDFAF All milestones', callback_data: 'nav:milestones' },
-        { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
+        { text: '\uD83D\uDCCB View all coins', callback_data: 'nav:coinlist' },
       ],
+      [{ text: '\u2795 Add coin', callback_data: 'addcoin:start' }],
     ],
   });
+  return { text, keyboard };
+}
+
+// List every tracked coin, marking which were added via /addcoin (and are
+// therefore removable) vs. the 10 the bot ships with.
+function coinList(coins, customSymbols) {
+  const lines = coins.map((c) => `${c.symbol.padEnd(6, ' ')} ${c.name}${customSymbols.has(c.symbol) ? '  (custom)' : ''}`);
+  const text = `Tracked coins (${coins.length})\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines.join('\n')}\n\nCustom coins can be removed \u2014 pick one below.`;
+  const customButtons = coins
+    .filter((c) => customSymbols.has(c.symbol))
+    .map((c) => ({ text: `\u2716 ${c.symbol}`, callback_data: `removecoin:pick:${c.symbol}` }));
+  const keyboard = [...chunk(customButtons, 3), ...footer('nav:coinsettings')];
+  return { text, keyboard };
+}
+
+function removeCoinConfirm(symbol) {
+  const text = `Remove ${symbol}? This stops tracking it, and clears its threshold/tags. This can't be undone \u2014 you'd need to /addcoin it again from scratch.`;
+  const keyboard = [
+    [
+      { text: '\u2705 Confirm remove', callback_data: 'removecoin:confirm' },
+      { text: '\u274C Cancel', callback_data: 'removecoin:cancel' },
+    ],
+    HOME_ROW,
+  ];
   return { text, keyboard };
 }
 
@@ -965,6 +990,8 @@ module.exports = {
   thresholdEdit,
   coinSettings,
   coinSettingsMenu,
+  coinList,
+  removeCoinConfirm,
   milestoneList,
   muteMenu,
   muteDurationPicker,
