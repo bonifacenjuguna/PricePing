@@ -31,12 +31,32 @@ const BUILT_IN_SYMBOLS = new Set(builtInCoins.map((c) => c.symbol));
 // object through the whole codebase.
 
 // Called once at boot: loads anything added via /addcoin in a previous
-// session and appends it to config.coins.
+// session and appends it to config.coins. Also re-fetches each one's logo
+// file if it's missing — unlike the original 10 (baked into the Docker
+// image by prepare-assets.js at *build* time), a custom coin's logo is
+// only ever written at *runtime* (fetchLogo() below, called from
+// addCoin()), straight to local disk. Railway's filesystem is ephemeral
+// per deploy — anything written after build time is gone on the next
+// redeploy/restart. The coin itself survives fine (it's in Postgres,
+// reloaded above), but without this, its logo silently stays missing
+// forever after the first redeploy: compositeLogo() in cardRenderer.js
+// just finds no file and skips compositing, leaving a blank white circle
+// on the card — no error, nothing logged, easy to miss.
 async function loadCustomCoins() {
   const custom = await customCoinsDb.getAll();
   for (const coin of custom) {
     if (!config.coins.find((c) => c.symbol === coin.symbol)) {
       config.coins.push(coin);
+    }
+    const pngPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
+    if (!fs.existsSync(pngPath)) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const source = await fetchLogo(coin);
+        logger.info(`Regenerated missing logo for custom coin ${coin.symbol} (${source})`);
+      } catch (err) {
+        logger.warn(`Could not regenerate logo for custom coin ${coin.symbol}`, { message: err.message });
+      }
     }
   }
   if (custom.length) {

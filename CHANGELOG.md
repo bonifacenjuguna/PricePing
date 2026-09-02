@@ -3,6 +3,27 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.7.8 — Custom coin logos vanishing after redeploy
+
+**Fixed**
+- Custom coins added via `/addcoin` would show a blank white circle
+  instead of their logo after any redeploy/restart. Root cause: the
+  original 10 coins' logos are baked into the Docker image at *build*
+  time (`prepare-assets`), so they survive redeploys — but a custom
+  coin's logo is only ever written to local disk at *runtime*
+  (`/addcoin`), and Railway's filesystem is ephemeral by default, so
+  that file doesn't survive the next deploy. The coin itself was fine
+  (its symbol/pair/color live in Postgres and reload correctly), but
+  nothing ever re-fetched its *logo file* \u2014 `compositeLogo()` just
+  silently found no file and skipped compositing, leaving the card's
+  white backing circle with nothing on it. `loadCustomCoins()` now
+  regenerates any custom coin's logo that's missing on boot, so this
+  self-heals on the next restart with no persistent volume needed.
+  Scanned for other runtime-written files with the same problem \u2014
+  this was the only one.
+
+---
+
 ## v0.7.7 — Critical fix: missing require broke /coins and coin settings; rich broadcast; Fear & Greed
 
 **Fixed \u2014 the important one**

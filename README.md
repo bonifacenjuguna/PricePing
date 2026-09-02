@@ -241,6 +241,14 @@ added later via `/addcoin` fetch their own logo at runtime, same
 monogram fallback if that fails). Railway deploys handle both steps
 automatically via `railway.json` — see the comments in that file.
 
+**Logo persistence**: the original 10 coins' logos are baked into the
+Docker image at *build* time by `prepare-assets`, so they survive every
+redeploy. A custom coin's logo (via `/addcoin`) is written to local disk
+at *runtime* instead — which doesn't survive a redeploy on Railway's
+default ephemeral filesystem. `coinRegistry.loadCustomCoins()` re-fetches
+any custom coin's logo that's missing on boot, so this self-heals
+automatically on the next restart; there's no persistent volume needed.
+
 ## Architecture
 
 Single Node process — a self-scheduling tick loop (`src/services/
