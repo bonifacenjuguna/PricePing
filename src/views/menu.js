@@ -171,7 +171,10 @@ function hub() {
       { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
     ],
     [
+      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
       { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
+    ],
+    [
       { text: '\uD83D\uDE28 Fear & Greed', callback_data: 'nav:feargreed' },
     ],
     [
@@ -283,7 +286,7 @@ function thresholdEdit(symbol, threshold) {
 }
 
 // ---------- Unified coin settings screen ----------
-function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, hasCoinPostButton = true, isCustom = false }) {
+function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, hasCoinPostButton = true, isCustom = false, inWatchlist = false }) {
   const tStr = threshold ? (threshold.type === 'pct' ? `${threshold.value}%` : `$${format.formatChangeUsd(threshold.value)}`) : '\u2014';
   const mStr = milestone.isDisabled ? 'off' : milestone.step ? `$${format.formatChangeUsd(milestone.step)}${milestone.isCustom ? ' (custom)' : ' (default)'}` : '\u2014';
   const cStr = `${cooldownMinutes}m${isDefaultCooldown ? ' (default)' : ' (custom)'}`;
@@ -319,6 +322,7 @@ function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefault
     isDefaultCooldown ? [] : [{ text: '\u21A9 Reset cooldown to default', callback_data: `cooldown:reset:${symbol}` }],
     [{ text: '\uD83D\uDD07 Mute', callback_data: `mute:coin:${symbol}` }],
     [{ text: '\uD83D\uDCDC History', callback_data: `history:coin:${symbol}` }],
+    [{ text: inWatchlist ? '\u2B50 Remove from watchlist' : '\u2606 Add to watchlist', callback_data: `markets:watch:${symbol}` }],
     isCustom ? [{ text: '\uD83D\uDDD1 Remove coin', callback_data: `removecoin:pick:${symbol}` }] : [],
     ...footer('nav:thresholds'),
   ].filter((row) => row.length);
@@ -618,6 +622,36 @@ function moversChannelPicker(tagArg, channels) {
   return { text, keyboard: channelPicker(`movers:postto:${tagArg}`, channels, [backRow('nav:movers')]) };
 }
 
+// ---------- Markets hub ----------
+function marketsHub({ categories, uncategorizedCount }) {
+  const text = '\uD83D\uDC8E PricePing Markets';
+  const catRows = categories.map((c) => [{ text: `${c.emoji} ${c.label} (${c.count})`, callback_data: `markets:cat:${c.tag}` }]);
+  const keyboard = [
+    [{ text: '\uD83D\uDFE0 TOP 20', callback_data: 'markets:top20' }],
+    ...catRows,
+    ...(uncategorizedCount ? [[{ text: `\u26AA Uncategorized (${uncategorizedCount})`, callback_data: 'markets:cat:uncategorized' }]] : []),
+    [
+      { text: '\uD83D\uDCC8 Top Gainers', callback_data: 'markets:gainers' },
+      { text: '\uD83D\uDCC9 Top Losers', callback_data: 'markets:losers' },
+    ],
+    [{ text: '\u2B50 My Watchlist', callback_data: 'markets:watchlist' }],
+    [{ text: '\uD83D\uDD04 Refresh classification', callback_data: 'markets:reclassify' }],
+    ...footer('nav:hub'),
+  ];
+  return { text, keyboard };
+}
+
+// rows: [{symbol, price}] — price may be undefined if Binance was
+// unreachable, still shown (just without a price line) rather than
+// dropping the coin from the list.
+function marketsCoinList(label, rows, backTarget) {
+  const lines = rows.map((r) => (r.price !== undefined ? `${r.symbol.padEnd(6, ' ')} $${format.formatPrice(r.price)}` : r.symbol));
+  const text = `${label} (${rows.length})\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${lines.join('\n')}`;
+  const coinButtons = rows.map((r) => ({ text: r.symbol, callback_data: `coin:settings:${r.symbol}` }));
+  const keyboard = [...chunk(coinButtons, 4), [{ text: '\u25C0 Back', callback_data: backTarget }], HOME_ROW];
+  return { text, keyboard };
+}
+
 // ---------- Channels ----------
 function channelList(channels, defaultsByType) {
   const lines = channels.length
@@ -767,6 +801,20 @@ function removeCoinConfirm(symbol) {
     HOME_ROW,
   ];
   return { text, keyboard };
+}
+
+function removeCoinConfirmBatch(removable, notTracked, notCustom) {
+  const lines = [`Remove ${removable.length} coin(s)? ${removable.join(', ')}`, 'Stops tracking each, clears their threshold/tags. Can\u2019t be undone.'];
+  if (notTracked.length) lines.push(`\nNot tracked, will be skipped: ${notTracked.join(', ')}`);
+  if (notCustom.length) lines.push(`\nBuilt-in, can't remove this way, will be skipped: ${notCustom.join(', ')}`);
+  const keyboard = [
+    [
+      { text: `\u2705 Confirm remove (${removable.length})`, callback_data: 'removecoin:confirm' },
+      { text: '\u274C Cancel', callback_data: 'removecoin:cancel' },
+    ],
+    HOME_ROW,
+  ];
+  return { text: lines.join('\n'), keyboard };
 }
 
 // ---------- History ----------
@@ -1001,6 +1049,7 @@ module.exports = {
   coinSettingsMenu,
   coinList,
   removeCoinConfirm,
+  removeCoinConfirmBatch,
   milestoneList,
   muteMenu,
   muteDurationPicker,
@@ -1026,6 +1075,8 @@ module.exports = {
   bulkWizardMuteDuration,
   bulkWizardSummary,
   moversChannelPicker,
+  marketsHub,
+  marketsCoinList,
   channelList,
   channelTypePicker,
   channelTypeDefaultPicker,

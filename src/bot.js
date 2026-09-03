@@ -88,6 +88,7 @@ bot.command('schedules', commands.schedulesListCmd);
 bot.command('addrule', commands.ruleCmd);
 bot.command('rules', commands.rulesListCmd);
 bot.command('movers', commands.moversCmd);
+bot.command('markets', commands.marketsCmd);
 bot.command('feargreed', commands.fearGreedCmd);
 bot.command('fng', commands.fearGreedCmd);
 bot.command('tag', commands.tagCmd);

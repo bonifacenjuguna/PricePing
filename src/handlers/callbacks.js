@@ -57,6 +57,8 @@ async function onCallback(ctx) {
           return commands.rulesScreen(ctx);
         case 'movers':
           return commands.moversScreen(ctx);
+        case 'markets':
+          return commands.marketsHubScreen(ctx);
         case 'feargreed':
           return commands.fearGreedScreen(ctx);
         case 'tags':
@@ -382,6 +384,18 @@ async function onCallback(ctx) {
       if (a1 === 'edit') {
         return commands.ruleEditStart(ctx, a2);
       }
+      return undefined;
+    }
+
+    // ---- markets: hub — categories, top20, gainers/losers, watchlist ----
+    if (ns === 'markets') {
+      if (a1 === 'cat') return commands.marketsCategoryScreen(ctx, a2);
+      if (a1 === 'top20') return commands.marketsTop20Screen(ctx);
+      if (a1 === 'gainers') return commands.marketsGainersScreen(ctx);
+      if (a1 === 'losers') return commands.marketsLosersScreen(ctx);
+      if (a1 === 'watchlist') return commands.marketsWatchlistScreen(ctx);
+      if (a1 === 'reclassify') return commands.marketsReclassifyStart(ctx);
+      if (a1 === 'watch') return commands.marketsWatchToggle(ctx, a2);
       return undefined;
     }
 

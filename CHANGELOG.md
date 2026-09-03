@@ -3,6 +3,42 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.8.0 — Markets hub: auto-classification, Top 20, batch /removecoin
+
+**Added**
+- `/markets` (also its own hub button): dynamic category browser \u2014
+  every category button reflects the database live, none hard-coded.
+  Categories: Layer 1, Layer 2, DeFi, AI & DePIN, Gaming & Metaverse,
+  Memecoins, plus Uncategorized when relevant.
+- Auto-classification via CoinGecko (free, no key) on every `/addcoin`
+  (single or bulk): resolves the coin there, reads its categories +
+  market cap rank, keyword-maps categories to the fixed set above, tags
+  it (a coin can land in more than one), caches the CoinGecko id + rank
+  in a new `coin_meta` table. Binance's own API has no category data at
+  all \u2014 this had to be a different source. See the README's Markets
+  section for exactly what this is and isn't (keyword-based, not a
+  weighted-confidence/web-research classifier).
+- Top 20 (by market cap rank), Top Gainers/Losers (dedicated top-10
+  single-direction lists, separate from the existing side-by-side
+  `/movers`), and a Watchlist (\u2B50 toggle button on any coin's settings
+  screen \u2014 one shared list, since this bot is single-admin
+  throughout).
+- "\uD83D\uDD04 Refresh classification" on the Markets hub: re-runs
+  classification for anything never classified or >14 days stale, since
+  there's no background scheduler doing this automatically (would mean
+  unattended CoinGecko calls against its rate limit).
+- `/removecoin` now takes multiple symbols at once
+  (`/removecoin ADA DOGE AAVE`), same non-destructive-batch pattern as
+  bulk `/addcoin` \u2014 one confirm, anything not tracked/not removable
+  is reported and skipped rather than blocking the rest.
+- Bulk `/addcoin` summary now includes a classification tally (how many
+  landed in each category, how many uncategorized).
+
+**Migration note:** run `npm run migrate` after deploying \u2014 adds
+`coin_meta` (new table, doesn't touch existing ones).
+
+---
+
 ## v0.7.8 — Custom coin logos vanishing after redeploy
 
 **Fixed**

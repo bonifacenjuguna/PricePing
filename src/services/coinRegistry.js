@@ -9,6 +9,7 @@ const coinTagsDb = require('../db/coinTags');
 const thresholdsDb = require('../db/thresholds');
 const { coins: builtInCoins } = require('../coins');
 const { resolveLogoSvg } = require('../utils/logoFetch');
+const categorize = require('./categorize');
 
 // Keep in sync with scripts/prepare-assets.js — same reasoning: cards
 // composite this onto a 3x-supersampled canvas now (see cardRenderer.js),
@@ -111,7 +112,13 @@ async function addCoin({ symbol, name, binancePair, color, isStable, defaultThre
     logger.warn(`Could not prepare logo for new coin ${sym}`, { message: err.message });
   }
 
-  return { coin, logoSource };
+  // Best-effort market categorization (Layer 1/2, DeFi, AI & DePIN,
+  // Gaming & Metaverse, Memecoins) via CoinGecko — see categorize.js for
+  // why CoinGecko and not Binance. Never blocks the coin from being added
+  // if it fails or the symbol isn't found there.
+  const { tags: autoTags } = await categorize.autoTagCoin(sym);
+
+  return { coin, logoSource, autoTags };
 }
 
 // Undoes /addcoin. Only ever targets a coin that was itself added via

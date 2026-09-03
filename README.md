@@ -125,6 +125,51 @@ creating a second, conflicting BTC entry. To point an existing coin at a
 different quote pair, `/removecoin` it first, then re-add with the new
 pair.
 
+`/removecoin` takes several symbols the same way: `/removecoin ADA DOGE
+AAVE` (space- or line-separated), one confirm covers the whole batch, and
+anything not tracked or not removable (the built-in 10) is reported and
+skipped rather than blocking the rest.
+
+## Markets — dynamic categories, Top 20, gainers/losers, watchlist
+
+`/markets` (also its own hub button) is a live-updating browser on top of
+everything tracked: category buttons only appear when they actually have
+coins in them, nothing is hard-coded.
+
+**Auto-classification**: every coin added via `/addcoin` gets checked
+against [CoinGecko](https://www.coingecko.com/en/api) — free, no API key
+— for its categories and market cap rank, then mapped to a fixed set
+(Layer 1, Layer 2, DeFi, AI & DePIN, Gaming & Metaverse, Memecoins) by
+keyword match against CoinGecko's own category labels. A coin can land in
+more than one. Worth being upfront about the scope here: this is
+deliberately a straightforward keyword-based classifier, not a
+weighted-evidence/confidence-scored system with live web research per
+coin — that's a meaningfully bigger system (semantic comparison against
+category descriptions, multi-source consensus, a review queue for
+low-confidence results) that wasn't built here. What's shipped: CoinGecko
+categories → keyword match → tag, cached in `coin_meta`/`coin_tags` so it
+isn't redone on every button tap. A coin CoinGecko doesn't have a match
+for, or that matches none of the keyword groups, shows up under
+**Uncategorized** rather than getting force-fit somewhere. **Binance's
+own API has no category data at all** — it only validates that a pair is
+real and provides live prices; CoinGecko is the actual source for what a
+coin *is*.
+
+**Reclassification**: there's no background scheduler re-checking
+classifications over time (that would mean periodic CoinGecko calls
+running unattended against its free-tier rate limit). Instead, "🔄
+Refresh classification" on the Markets hub re-runs it for anything never
+classified or classified more than 14 days ago, paced to stay under
+CoinGecko's ~30 req/min limit.
+
+**Top 20** means by market cap rank (from CoinGecko, cached in
+`coin_meta`), not Binance volume or price — a coin can be both in the Top
+20 and in a category at the same time, they're independent.
+
+**Watchlist**: this bot is single-admin throughout (one Telegram account
+drives it), so there's one shared watchlist, not a per-end-user one —
+toggle a coin in/out via the ⭐ button on its settings screen.
+
 ## Start here: `/commands`
 
 Every feature is reachable by button — `/commands` (or `/start` → "☰ All
@@ -300,7 +345,8 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Thresholds & milestones | `/thresholds` `/setthreshold SYMBOL AMOUNT [pct]` `/milestones` `/setmilestone SYMBOL STEP\|off` |
 | Cooldown | `/setcooldown SYMBOL MINUTES` `/resetcooldown SYMBOL` |
 | Pause / mute | `/pause [duration]` `/resume` `/mute SYMBOL [duration]` `/unmute SYMBOL` |
-| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required) `/removecoin SYMBOL` `/coins` `/history SYMBOL [channel]` |
+| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required, or paste several lines to bulk-add) `/removecoin SYMBOL [SYMBOL ...]` `/coins` `/history SYMBOL [channel]` |
+| Markets | `/markets` \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20 by market cap, gainers/losers, watchlist \u2014 also its own hub button |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
 | Automation | `/schedule <line>` `/schedules` `/addrule <line>` `/rules` `/tag SYMBOL TAG` `/untag SYMBOL TAG` `/tags` |

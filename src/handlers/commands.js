@@ -15,6 +15,8 @@ const customVarsDb = require('../db/customVars');
 const schedulesDb = require('../db/schedules');
 const rulesDb = require('../db/rules');
 const coinTagsDb = require('../db/coinTags');
+const coinMetaDb = require('../db/coinMeta');
+const categorize = require('../services/categorize');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
 const customCoinsDb = require('../db/customCoins');
@@ -72,7 +74,8 @@ async function help(ctx) {
       `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
-      `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL \u00B7 /coins \u2014 see everything tracked, which are custom \u00B7 paste several lines at once to bulk-add\n` +
+      `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL(s) \u00B7 /coins \u2014 both accept several at once (bulk-add pastes multiple lines, removecoin takes SYMBOL SYMBOL ...)\n` +
+      `/markets \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20, gainers/losers, watchlist\n` +
       `/history SYMBOL [channel]\n` +
       `/stats\n` +
       `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
@@ -330,7 +333,7 @@ async function coinSettingsScreen(ctx, symbol) {
     await ctx.answerCbQuery('Unknown coin');
     return;
   }
-  const [threshold, milestoneMap, cooldownOverrides, states, globallyPaused, lastAlerts, customCoins] = await Promise.all([
+  const [threshold, milestoneMap, cooldownOverrides, states, globallyPaused, lastAlerts, customCoins, coinTags] = await Promise.all([
     thresholdsDb.get(symbol),
     milestonesDb.getAll(),
     cooldownsDb.getAll(),
@@ -338,6 +341,7 @@ async function coinSettingsScreen(ctx, symbol) {
     settingsDb.isPaused(),
     alertsLogDb.recentForSymbol(symbol, 1),
     customCoinsDb.getAll(),
+    coinTagsDb.getForSymbol(symbol),
   ]);
   const milestone = milestoneMap.get(symbol) || { step: coin.milestoneStep, isCustom: false, isDisabled: false };
   const isDefaultCooldown = cooldownOverrides[symbol] === undefined;
@@ -347,10 +351,26 @@ async function coinSettingsScreen(ctx, symbol) {
     ? `${format.timeAgo(lastAlerts[0].created_at)} (${lastAlerts[0].alert_type})`
     : null;
   const isCustom = customCoins.some((c) => c.symbol === symbol);
+  const inWatchlist = coinTags.includes('watchlist');
   await inlineEdit(
     ctx,
-    menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, isCustom })
+    menu.coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefaultCooldown, mutedUntil, globallyPaused, lastAlertText, isCustom, inWatchlist })
   );
+}
+async function marketsWatchToggle(ctx, symbol) {
+  if (!findCoin(symbol)) {
+    await ctx.answerCbQuery('Unknown coin');
+    return;
+  }
+  const tags = await coinTagsDb.getForSymbol(symbol);
+  if (tags.includes(WATCHLIST_TAG)) {
+    await coinTagsDb.remove(symbol, WATCHLIST_TAG);
+    await ctx.answerCbQuery('Removed from watchlist');
+  } else {
+    await coinTagsDb.add(symbol, WATCHLIST_TAG);
+    await ctx.answerCbQuery('Added to watchlist \u2B50');
+  }
+  await coinSettingsScreen(ctx, symbol);
 }
 
 // --- Milestones ---
@@ -875,26 +895,51 @@ async function runBulkAddCoins(ctx, lines) {
   }
 
   const added = [];
+  const addedTags = {};
   const failed = [];
   for (const spec of toAdd) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      await coinRegistry.addCoin({ symbol: spec.symbol, name: spec.name, binancePair: spec.pair, color: spec.color });
+      const { autoTags } = await coinRegistry.addCoin({ symbol: spec.symbol, name: spec.name, binancePair: spec.pair, color: spec.color });
       added.push(spec.symbol);
+      if (autoTags.length) addedTags[spec.symbol] = autoTags;
     } catch (err) {
       failed.push(`${spec.symbol} (${err.message})`);
     }
+    // addCoin makes 2 CoinGecko calls (search + detail) for auto-tagging;
+    // CoinGecko's free tier is ~30 req/min, so pace bulk batches to stay
+    // safely under that rather than bursting through a 20-coin paste.
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, 2200));
   }
   if (added.length) {
     eventsDb.recordAudit(`bulk-added ${added.length} coin(s): ${added.join(', ')}`).catch(() => {});
   }
 
   const parts = [];
-  parts.push(`\u2705 Added (${added.length}): ${added.length ? added.join(', ') : 'none'}`);
+  const addedLines = added.map((s) => (addedTags[s] ? `${s} (${addedTags[s].map((t) => `#${t}`).join(', ')})` : s));
+  parts.push(`\u2705 Added (${added.length}): ${addedLines.length ? addedLines.join(', ') : 'none'}`);
   if (alreadyTracked.length) parts.push(`\u23ED Already tracked, skipped (${alreadyTracked.length}):\n${alreadyTracked.join('\n')}`);
   if (invalidPair.length) parts.push(`\u274C Invalid Binance pair, skipped (${invalidPair.length}):\n${invalidPair.join('\n')}`);
   if (failed.length) parts.push(`\u26A0\uFE0F Failed while adding (${failed.length}):\n${failed.join('\n')}`);
   if (badFormat.length) parts.push(`\u2753 Couldn't parse, skipped (${badFormat.length}):\n${badFormat.join('\n')}`);
+
+  if (added.length) {
+    const tally = {};
+    let uncategorized = 0;
+    for (const s of added) {
+      const tags = addedTags[s] || [];
+      if (!tags.length) uncategorized += 1;
+      for (const t of tags) tally[t] = (tally[t] || 0) + 1;
+    }
+    const tallyLines = Object.entries(tally)
+      .sort((a, b) => b[1] - a[1])
+      .map(([tag, count]) => `#${tag}: ${count}`);
+    if (uncategorized) tallyLines.push(`uncategorized: ${uncategorized}`);
+    if (tallyLines.length) {
+      parts.push(`\uD83D\uDCCA Classification (a coin can land in more than one):\n${tallyLines.join('\n')}`);
+    }
+  }
 
   await ctx.reply(parts.join('\n\n'));
 }
@@ -907,10 +952,11 @@ async function addCoinConfirmExecute(ctx) {
   const { symbol, name, pair, color } = pendingAddCoin;
   pendingAddCoin = null;
   try {
-    const { logoSource } = await coinRegistry.addCoin({ symbol, name, binancePair: pair, color });
+    const { logoSource, autoTags } = await coinRegistry.addCoin({ symbol, name, binancePair: pair, color });
     eventsDb.recordAudit(`added coin ${symbol} (${pair})`).catch(() => {});
+    const tagsNote = autoTags.length ? ` Auto-tagged: ${autoTags.map((t) => `#${t}`).join(', ')}.` : '';
     await ctx.reply(
-      `${symbol} added \u2014 tracking ${pair}. Logo ${logoSource === 'downloaded' ? 'downloaded' : 'using a plain fallback'}.`
+      `${symbol} added \u2014 tracking ${pair}. Logo ${logoSource === 'downloaded' ? 'downloaded' : 'using a plain fallback'}.${tagsNote}`
     );
   } catch (err) {
     await ctx.reply(`Could not add ${symbol}: ${err.message}`);
@@ -926,7 +972,7 @@ async function addCoinCancel(ctx) {
 // Remove a custom-added coin (symmetric with /addcoin). Built-in coins
 // aren't removable this way — see coinRegistry.removeCoin for why.
 // ---------------------------------------------------------------------------
-let pendingRemoveCoin = null; // single-admin bot — one removal confirmation in flight at a time
+let pendingRemoveCoin = null; // single-admin bot — one removal confirmation in flight at a time (symbol, or an array of symbols for a batch)
 
 async function coinListScreen(ctx) {
   const custom = await customCoinsDb.getAll();
@@ -934,8 +980,16 @@ async function coinListScreen(ctx) {
   await inlineEdit(ctx, menu.coinList(config.coins, customSymbols));
 }
 async function removeCoinCmd(ctx) {
-  const symbol = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase();
-  await stageRemoveCoin(ctx, symbol);
+  const raw = ctx.message.text.replace(/^\/removecoin(@\w+)?\s*/, '');
+  const symbols = raw
+    .split(/[\s\n]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (symbols.length > 1) {
+    await stageRemoveCoinBatch(ctx, symbols);
+    return;
+  }
+  await stageRemoveCoin(ctx, symbols[0] || '');
 }
 async function removeCoinPick(ctx, symbol) {
   await ctx.answerCbQuery();
@@ -955,21 +1009,64 @@ async function stageRemoveCoin(ctx, symbol) {
   pendingRemoveCoin = symbol;
   await inlineReply(ctx, menu.removeCoinConfirm(symbol));
 }
+// Batch removal: one confirm screen covering everything that's actually
+// removable, upfront-reporting anything that isn't (not tracked, or one
+// of the built-in 10) rather than silently dropping it — one bad symbol
+// in the list doesn't block the rest.
+async function stageRemoveCoinBatch(ctx, symbols) {
+  const custom = await customCoinsDb.getAll();
+  const customSymbols = new Set(custom.map((c) => c.symbol));
+  const removable = [];
+  const notTracked = [];
+  const notCustom = [];
+  const seen = new Set();
+  for (const symbol of symbols) {
+    if (seen.has(symbol)) continue;
+    seen.add(symbol);
+    if (!findCoin(symbol)) {
+      notTracked.push(symbol);
+    } else if (!customSymbols.has(symbol)) {
+      notCustom.push(symbol);
+    } else {
+      removable.push(symbol);
+    }
+  }
+  if (!removable.length) {
+    const parts = ['Nothing to remove.'];
+    if (notTracked.length) parts.push(`Not tracked: ${notTracked.join(', ')}`);
+    if (notCustom.length) parts.push(`Built-in, can't remove this way: ${notCustom.join(', ')}`);
+    await ctx.reply(parts.join('\n'));
+    return;
+  }
+  pendingRemoveCoin = removable;
+  await inlineReply(ctx, menu.removeCoinConfirmBatch(removable, notTracked, notCustom));
+}
 async function removeCoinConfirmExecute(ctx) {
   if (!pendingRemoveCoin) {
     await ctx.answerCbQuery('Nothing pending');
     return;
   }
   await ctx.answerCbQuery('Removing...');
-  const symbol = pendingRemoveCoin;
+  const symbols = Array.isArray(pendingRemoveCoin) ? pendingRemoveCoin : [pendingRemoveCoin];
   pendingRemoveCoin = null;
-  try {
-    await coinRegistry.removeCoin(symbol);
-    eventsDb.recordAudit(`removed coin ${symbol}`).catch(() => {});
-    await ctx.reply(`${symbol} removed \u2014 no longer tracked, and its thresholds/tags are cleared.`);
-  } catch (err) {
-    await ctx.reply(`Could not remove ${symbol}: ${err.message}`);
+
+  const removed = [];
+  const failed = [];
+  for (const symbol of symbols) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await coinRegistry.removeCoin(symbol);
+      removed.push(symbol);
+    } catch (err) {
+      failed.push(`${symbol} (${err.message})`);
+    }
   }
+  if (removed.length) {
+    eventsDb.recordAudit(`removed coin(s): ${removed.join(', ')}`).catch(() => {});
+  }
+  const parts = [`\u2705 Removed (${removed.length}): ${removed.length ? removed.join(', ') : 'none'}`];
+  if (failed.length) parts.push(`\u26A0\uFE0F Failed (${failed.length}):\n${failed.join('\n')}`);
+  await ctx.reply(parts.join('\n\n'));
 }
 async function removeCoinCancel(ctx) {
   pendingRemoveCoin = null;
@@ -2146,15 +2243,11 @@ async function fearGreedScreen(ctx) {
 // button (not nested under Automation) since it's something you look at
 // and act on directly, not a recurring/background thing.
 // ---------------------------------------------------------------------------
-async function buildMoversText(tagArg) {
-  let symbols = config.coins.map((c) => c.symbol);
-  let scopeLabel = 'all tracked coins';
-  if (tagArg) {
-    symbols = await coinTagsDb.getSymbolsForTag(tagArg);
-    scopeLabel = `#${tagArg}`;
-    if (!symbols.length) return { error: `No coins tagged "${tagArg}". /tags to see what exists.` };
-  }
-
+// Shared by buildMoversText and the dedicated Markets gainers/losers
+// screens — computes sorted {symbol, pct, price} rows for a set of
+// symbols (or every tracked non-stable coin if symbols is omitted).
+async function computeMoversRows(symbols) {
+  const targetSymbols = symbols || config.coins.map((c) => c.symbol);
   let priceMap;
   let statsMap;
   try {
@@ -2162,8 +2255,7 @@ async function buildMoversText(tagArg) {
   } catch {
     return { error: 'Could not reach Binance right now \u2014 try again shortly.' };
   }
-
-  const rows = symbols
+  const rows = targetSymbols
     .map((symbol) => {
       const coin = findCoin(symbol);
       const stats = statsMap.get(symbol);
@@ -2173,13 +2265,28 @@ async function buildMoversText(tagArg) {
     })
     .filter(Boolean)
     .sort((a, b) => b.pct - a.pct);
+  return { rows };
+}
+const moversLine = (r) =>
+  `${r.symbol.padEnd(5, ' ')} ${r.pct >= 0 ? '\u25B2' : '\u25BC'} ${format.formatPct(r.pct)}  $${format.formatPrice(r.price)}`;
+
+async function buildMoversText(tagArg) {
+  let symbols = config.coins.map((c) => c.symbol);
+  let scopeLabel = 'all tracked coins';
+  if (tagArg) {
+    symbols = await coinTagsDb.getSymbolsForTag(tagArg);
+    scopeLabel = `#${tagArg}`;
+    if (!symbols.length) return { error: `No coins tagged "${tagArg}". /tags to see what exists.` };
+  }
+
+  const { rows, error } = await computeMoversRows(symbols);
+  if (error) return { error };
 
   if (!rows.length) {
     return { error: 'No movers data available right now (need at least one non-stable tracked coin with 24h stats).' };
   }
 
-  const line = (r) =>
-    `${r.symbol.padEnd(5, ' ')} ${r.pct >= 0 ? '\u25B2' : '\u25BC'} ${format.formatPct(r.pct)}  $${format.formatPrice(r.price)}`;
+  const line = moversLine;
   const gainers = rows.filter((r) => r.pct >= 0).slice(0, 5);
   const losers = rows
     .filter((r) => r.pct < 0)
@@ -2237,6 +2344,144 @@ async function moversPostExecute(ctx, tagArg, channelName) {
   } catch (err) {
     await ctx.reply(`Could not post to #${channelName}: ${err.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Markets hub — dynamic category browser on top of the auto-tagging in
+// categorize.js. Every button here reflects the database live: a category
+// only appears if it currently has coins in it, "Uncategorized" only
+// appears if there are any, nothing is hard-coded.
+// ---------------------------------------------------------------------------
+const CATEGORY_META = {
+  layer1: { emoji: '\uD83D\uDD35', label: 'LAYER 1' },
+  layer2: { emoji: '\uD83D\uDD35', label: 'LAYER 2' },
+  defi: { emoji: '\uD83D\uDFE3', label: 'DeFi' },
+  'ai-depin': { emoji: '\uD83E\uDD16', label: 'AI & DePIN' },
+  'gaming-metaverse': { emoji: '\uD83C\uDFAE', label: 'GAMING & METAVERSE' },
+  memecoins: { emoji: '\uD83D\uDD25', label: 'MEMECOINS' },
+};
+const WATCHLIST_TAG = 'watchlist';
+
+async function uncategorizedSymbols() {
+  const allTags = await coinTagsDb.allTags();
+  const categoryTagNames = new Set(Object.keys(CATEGORY_META));
+  const relevantTags = allTags.filter((t) => categoryTagNames.has(t.tag));
+  const categorized = new Set();
+  for (const t of relevantTags) {
+    // eslint-disable-next-line no-await-in-loop
+    const symbols = await coinTagsDb.getSymbolsForTag(t.tag);
+    symbols.forEach((s) => categorized.add(s));
+  }
+  return config.coins.filter((c) => !c.isStable && !categorized.has(c.symbol)).map((c) => c.symbol);
+}
+
+async function marketsHubScreen(ctx) {
+  await ctx.answerCbQuery();
+  const allTags = await coinTagsDb.allTags();
+  const categories = allTags
+    .filter((t) => CATEGORY_META[t.tag] && t.coinCount > 0)
+    .map((t) => ({ tag: t.tag, count: t.coinCount, ...CATEGORY_META[t.tag] }));
+  const uncategorizedCount = (await uncategorizedSymbols()).length;
+  await inlineEdit(ctx, menu.marketsHub({ categories, uncategorizedCount }));
+}
+async function marketsCategoryScreen(ctx, tag) {
+  await ctx.answerCbQuery();
+  const symbols = tag === 'uncategorized' ? await uncategorizedSymbols() : await coinTagsDb.getSymbolsForTag(tag);
+  const label = tag === 'uncategorized' ? 'Uncategorized' : `${(CATEGORY_META[tag] || {}).emoji || '#'} ${(CATEGORY_META[tag] || {}).label || tag}`;
+  await renderMarketsCoinList(ctx, label, symbols);
+}
+async function marketsWatchlistScreen(ctx) {
+  await ctx.answerCbQuery();
+  const symbols = await coinTagsDb.getSymbolsForTag(WATCHLIST_TAG);
+  await renderMarketsCoinList(ctx, '\u2B50 My Watchlist', symbols, 'nav:markets');
+}
+async function renderMarketsCoinList(ctx, label, symbols, backTarget = 'nav:markets') {
+  if (!symbols.length) {
+    await inlineEdit(ctx, {
+      text: `${label}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nNothing here yet.`,
+      keyboard: [[{ text: '\u25C0 Back', callback_data: backTarget }], [{ text: '\uD83C\uDFE0 Home', callback_data: 'nav:home' }]],
+    });
+    return;
+  }
+  let priceMap;
+  try {
+    priceMap = await marketData.fetchAllPrices();
+  } catch {
+    priceMap = new Map();
+  }
+  const rows = symbols
+    .map((symbol) => ({ symbol, price: priceMap.get(findCoin(symbol) ? findCoin(symbol).binancePair : '') }))
+    .filter((r) => findCoin(r.symbol));
+  await inlineEdit(ctx, menu.marketsCoinList(label, rows, backTarget));
+}
+async function marketsTop20Screen(ctx) {
+  await ctx.answerCbQuery();
+  const meta = await coinMetaDb.getAll();
+  const ranked = meta
+    .filter((m) => m.marketCapRank && findCoin(m.symbol))
+    .sort((a, b) => a.marketCapRank - b.marketCapRank)
+    .slice(0, 20)
+    .map((m) => m.symbol);
+  await renderMarketsCoinList(ctx, '\uD83D\uDFE0 Top 20 by market cap', ranked, 'nav:markets');
+}
+async function marketsGainersScreen(ctx) {
+  await ctx.answerCbQuery();
+  await runMarketsRanked(ctx, 'gainers');
+}
+async function marketsLosersScreen(ctx) {
+  await ctx.answerCbQuery();
+  await runMarketsRanked(ctx, 'losers');
+}
+async function runMarketsRanked(ctx, direction) {
+  const { rows, error } = await computeMoversRows();
+  if (error) {
+    await ctx.reply(error);
+    return;
+  }
+  const picked = direction === 'gainers' ? rows.filter((r) => r.pct >= 0).slice(0, 10) : rows.filter((r) => r.pct < 0).slice(-10).reverse();
+  const label = direction === 'gainers' ? '\uD83D\uDCC8 Top Gainers (24h)' : '\uD83D\uDCC9 Top Losers (24h)';
+  const text = picked.length
+    ? `${label}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n${picked.map(moversLine).join('\n')}`
+    : `${label}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nNothing here right now.`;
+  await inlineEdit(ctx, { text, keyboard: [[{ text: '\u25C0 Back', callback_data: 'nav:markets' }], [{ text: '\uD83C\uDFE0 Home', callback_data: 'nav:home' }]] });
+}
+async function marketsCmd(ctx) {
+  await inlineReply(ctx, menu.marketsHub({ categories: [], uncategorizedCount: 0 }));
+}
+
+// Manual reclassification — periodic auto-reclassification would need a
+// scheduler this bot doesn't have (see the tick loop in poller.js — this
+// isn't wired into it, on purpose, to avoid burning CoinGecko's free-tier
+// rate limit in the background on every tick). This is the honest
+// alternative: an explicit action that re-runs categorize.autoTagCoin for
+// anything stale or never-classified.
+const RECLASSIFY_STALE_DAYS = 14;
+async function marketsReclassifyStart(ctx) {
+  await ctx.answerCbQuery();
+  const meta = await coinMetaDb.getAll();
+  const metaBySymbol = new Map(meta.map((m) => [m.symbol, m]));
+  const staleCutoff = Date.now() - RECLASSIFY_STALE_DAYS * 24 * 60 * 60 * 1000;
+  const targets = config.coins.filter((c) => {
+    const m = metaBySymbol.get(c.symbol);
+    if (!m) return true; // never classified
+    if (!m.updatedAt) return true;
+    return new Date(m.updatedAt).getTime() < staleCutoff;
+  });
+  if (!targets.length) {
+    await ctx.reply('Everything is already classified and recent \u2014 nothing to refresh.');
+    return;
+  }
+  await ctx.reply(`Reclassifying ${targets.length} coin(s)... this paces itself against CoinGecko's rate limit, so it'll take a bit.`);
+  const results = {};
+  for (const coin of targets) {
+    // eslint-disable-next-line no-await-in-loop
+    const { tags } = await categorize.autoTagCoin(coin.symbol);
+    results[coin.symbol] = tags;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+  }
+  const lines = Object.entries(results).map(([s, tags]) => `${s}: ${tags.length ? tags.map((t) => `#${t}`).join(', ') : 'uncategorized'}`);
+  await ctx.reply(`Reclassification done.\n\n${lines.join('\n')}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2893,6 +3138,15 @@ module.exports = {
   moversScreen,
   fearGreedCmd,
   fearGreedScreen,
+  marketsCmd,
+  marketsHubScreen,
+  marketsCategoryScreen,
+  marketsWatchlistScreen,
+  marketsTop20Screen,
+  marketsGainersScreen,
+  marketsLosersScreen,
+  marketsReclassifyStart,
+  marketsWatchToggle,
   moversPostStart,
   moversPostExecute,
   tagCmd,
