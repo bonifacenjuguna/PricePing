@@ -2,6 +2,7 @@ const { Input } = require('telegraf');
 const config = require('../config');
 const menu = require('../views/menu');
 const { bbtbMarkup } = require('../views/bbtb');
+const bbtbState = require('../services/bbtbState');
 
 const thresholdsDb = require('../db/thresholds');
 const coinStateDb = require('../db/coinState');
@@ -55,6 +56,7 @@ function findCoin(symbol) {
 // Core navigation
 // ---------------------------------------------------------------------------
 async function start(ctx) {
+  bbtbState.set('default');
   await ctx.reply('Welcome to PricePing admin \u2014 use the buttons below to navigate.', bbtbMarkup);
   await home(ctx);
 }
