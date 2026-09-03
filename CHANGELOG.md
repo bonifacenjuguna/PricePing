@@ -3,43 +3,6 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
-## v0.8.2 — Navigation overhaul: hub reorg, cross-links, 2x3 + contextual BBTB
-
-A deliberate pass on navigation specifically — not new features, fixing
-how you find and reach the ones already there.
-
-**Fixed**
-- `/commands` hub had two real orphans: Settings and Broadcast both
-  existed as full screens with no direct top-level button pointing at
-  them (Settings was only reachable by typing `/settings`; Broadcast only
-  by finding it nested inside the Channels screen). Both are proper hub
-  buttons now.
-- `home()` (the `/start` status screen) never got Markets or Movers added
-  when those features shipped \u2014 fixed.
-
-**Changed**
-- Hub reorganized so related things sit next to each other (Post & Chart
-  + Coin settings, Markets + Movers, Automation + Channels, Broadcast +
-  Fear & Greed, ...) instead of a flat list in build order. Settings and
-  Reset deliberately left as isolated single-button rows \u2014 admin and
-  destructive actions, not an oversight.
-- Added direct cross-links between related sections that previously
-  required detouring through the hub: Coin settings \u2194 Markets,
-  Automation \u2192 Markets.
-- Persistent bottom keyboard (BBTB) expanded from 2\u00D72 to 2\u00D73:
-  Home, Prices, Markets, Thresholds, Stats, Movers. Tapping Markets swaps
-  to a Markets-focused layout (Home, Markets, Coins, Movers, Fear &
-  Greed, Prices); tapping Home there swaps back. Documented the one real
-  constraint this runs into in the README \u2014 Telegram can't attach a
-  keyboard change to an edited message, so this can only trigger from an
-  actual BBTB tap, never from inline navigation.
-- The pinnable "\u2B50 Quick actions" row (Settings \u2192 Quick actions)
-  now includes Markets, Movers, Fear & Greed, Automation, and Coin
-  settings \u2014 these didn't exist yet when that catalog was first
-  built, so they were never addable.
-
----
-
 ## v0.8.1 — Multi-select coin picker
 
 **Added**

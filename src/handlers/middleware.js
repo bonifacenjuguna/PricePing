@@ -8,7 +8,7 @@ const { BBTB_LABELS } = require('../views/bbtb');
 const VIEWER_ALLOWED_COMMANDS = new Set([
   'start', 'help', 'commands', 'status', 'prices', 'history', 'stats',
   'whoami', 'milestones', 'thresholds', 'channels', 'variables',
-  'schedules', 'rules', 'coins', 'movers', 'markets', 'feargreed', 'fng', 'tags',
+  'schedules', 'rules',
 ]);
 const VIEWER_ALLOWED_BBTB = new Set(Object.values(BBTB_LABELS));
 

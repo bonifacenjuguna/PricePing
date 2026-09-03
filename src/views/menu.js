@@ -17,11 +17,6 @@ const PINNABLE_ACTIONS = [
   { key: 'stats', label: '\uD83D\uDCCA Stats', cb: 'nav:stats' },
   { key: 'history', label: '\uD83D\uDCDC History', cb: 'nav:history' },
   { key: 'channels', label: '\uD83D\uDCE1 Channels', cb: 'nav:channels' },
-  { key: 'markets', label: '\uD83D\uDC8E Markets', cb: 'nav:markets' },
-  { key: 'movers', label: '\uD83D\uDCC9 Movers', cb: 'nav:movers' },
-  { key: 'feargreed', label: '\uD83D\uDE28 Fear & Greed', cb: 'nav:feargreed' },
-  { key: 'automation', label: '\uD83D\uDCC5 Automation', cb: 'nav:automation' },
-  { key: 'coinsettings', label: '\u2699 Coin settings', cb: 'nav:coinsettings' },
 ];
 
 function chunk(arr, size) {
@@ -130,10 +125,6 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
       { text: '\uD83D\uDCC8 Chart', callback_data: 'nav:chartmenu' },
     ],
     [
-      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
-      { text: '\uD83D\uDCC9 Movers', callback_data: 'nav:movers' },
-    ],
-    [
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
       { text: '\u2699 Settings', callback_data: 'nav:settings' },
     ],
@@ -164,20 +155,12 @@ function hub() {
       { text: '\u2699 Coin settings', callback_data: 'nav:coinsettings' },
     ],
     [
-      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
-      { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
+      { text: '\uD83D\uDD07 Mute', callback_data: 'nav:mutemenu' },
+      { text: '\u23F8 Pause/Resume', callback_data: 'nav:pausemenu' },
     ],
     [
       { text: '\uD83D\uDCC5 Automation', callback_data: 'nav:automation' },
       { text: '\uD83D\uDCE1 Channels', callback_data: 'nav:channels' },
-    ],
-    [
-      { text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' },
-      { text: '\uD83D\uDE28 Fear & Greed', callback_data: 'nav:feargreed' },
-    ],
-    [
-      { text: '\uD83D\uDD07 Mute', callback_data: 'nav:mutemenu' },
-      { text: '\u23F8 Pause/Resume', callback_data: 'nav:pausemenu' },
     ],
     [
       { text: '\u270F Captions', callback_data: 'nav:captiontypes' },
@@ -187,8 +170,16 @@ function hub() {
       { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
       { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
     ],
-    [{ text: '\u2699\uFE0F Settings', callback_data: 'nav:settings' }],
-    [{ text: '\u267B Reset', callback_data: 'nav:reset' }],
+    [
+      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
+      { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
+    ],
+    [
+      { text: '\uD83D\uDE28 Fear & Greed', callback_data: 'nav:feargreed' },
+    ],
+    [
+      { text: '\u267B Reset', callback_data: 'nav:reset' },
+    ],
     HOME_ROW,
   ];
   return { text, keyboard };
@@ -407,7 +398,6 @@ function automationHub() {
       { text: '\uD83E\uDDF0 Bulk actions', callback_data: 'bulk:start' },
       { text: '\uD83C\uDFF7 Tags', callback_data: 'nav:tags' },
     ],
-    [{ text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' }],
     ...footer('nav:hub'),
   ];
   return { text, keyboard };
@@ -645,10 +635,7 @@ function marketsHub({ categories, uncategorizedCount }) {
       { text: '\uD83D\uDCC9 Top Losers', callback_data: 'markets:losers' },
     ],
     [{ text: '\u2B50 My Watchlist', callback_data: 'markets:watchlist' }],
-    [
-      { text: '\uD83D\uDD04 Refresh classification', callback_data: 'markets:reclassify' },
-      { text: '\u2699 Coin settings', callback_data: 'nav:coinsettings' },
-    ],
+    [{ text: '\uD83D\uDD04 Refresh classification', callback_data: 'markets:reclassify' }],
     ...footer('nav:hub'),
   ];
   return { text, keyboard };
@@ -821,7 +808,6 @@ function coinSettingsMenu(recentSymbols = []) {
         { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
         { text: '\u2611 Select multiple', callback_data: 'coinselect:start' },
       ],
-      [{ text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' }],
     ],
   });
   return { text, keyboard };
