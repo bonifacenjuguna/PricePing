@@ -173,9 +173,26 @@ toggle a coin in/out via the ⭐ button on its settings screen.
 ## Start here: `/commands`
 
 Every feature is reachable by button — `/commands` (or `/start` → "☰ All
-commands") opens the control panel: Post & Chart, Coin settings, Mute,
-Pause/Resume, Automation, Channels, Captions, Test, Stats, Reset. The
-persistent bottom keyboard covers the four most-used screens directly.
+commands") opens the control panel, grouped so related things sit
+together: Post & Chart + Coin settings, Markets + Movers, Automation +
+Channels, Broadcast + Fear & Greed, Mute + Pause/Resume, Captions + Test,
+Stats + History, then Settings and Reset on their own (admin and
+destructive actions get isolated on purpose, not paired). Settings and
+Broadcast are proper top-level buttons now — they existed as full screens
+before but had no direct link into them from the hub. Related screens
+also cross-link to each other directly (Coin settings ↔ Markets,
+Automation → Markets) instead of forcing a trip back to the hub every
+time.
+
+The persistent bottom keyboard is 2×3 now (was 2×2): Home, Prices,
+Markets, Thresholds, Stats, Movers. Tapping Markets swaps it to a
+Markets-focused layout (Home, Markets, Coins, Movers, Fear & Greed,
+Prices) — tap Home there to swap back. One real constraint worth knowing:
+Telegram can't attach a persistent-keyboard change to an edited message,
+only to a brand new one — so this swap only happens on an actual BBTB tap,
+never from inline-button navigation, and deep inline navigation back to
+Home won't auto-reset it (the next BBTB Home tap will).
+
 Screens reached from the hub have a "◀ Back" that returns one level, plus
 Home — consistent everywhere as of v0.4.0. A few things genuinely need
 free text (a hex color, a chat ID, a caption template, an exact schedule

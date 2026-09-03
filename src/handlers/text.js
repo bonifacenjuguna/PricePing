@@ -1,7 +1,8 @@
 const config = require('../config');
-const { BBTB_LABELS } = require('../views/bbtb');
+const { BBTB_LABELS, bbtbDefault, bbtbMarkets } = require('../views/bbtb');
 const commands = require('./commands');
 const pendingInput = require('../services/pendingInput');
+const bbtbState = require('../services/bbtbState');
 
 async function onText(ctx) {
   const text = ctx.message && ctx.message.text;
@@ -19,6 +20,12 @@ async function onText(ctx) {
 
   switch (text) {
     case BBTB_LABELS.home:
+      // Only send a keyboard-swap message on an actual transition, not on
+      // every repeated tap while already on the default layout.
+      if (bbtbState.get() !== 'default') {
+        bbtbState.set('default');
+        await ctx.reply('\uD83C\uDFE0 Main menu.', bbtbDefault);
+      }
       return commands.home(ctx);
     case BBTB_LABELS.prices:
       return commands.pricesCmd(ctx);
@@ -26,6 +33,18 @@ async function onText(ctx) {
       return commands.thresholdsCmd(ctx);
     case BBTB_LABELS.stats:
       return commands.statsCmd(ctx);
+    case BBTB_LABELS.markets:
+      if (bbtbState.get() !== 'markets') {
+        bbtbState.set('markets');
+        await ctx.reply('\uD83D\uDC8E Markets tools \u2014 tap \uD83C\uDFE0 Home below to switch back.', bbtbMarkets);
+      }
+      return commands.marketsCmd(ctx);
+    case BBTB_LABELS.movers:
+      return commands.moversCmd(ctx);
+    case BBTB_LABELS.coins:
+      return commands.coinListScreen(ctx);
+    case BBTB_LABELS.feargreed:
+      return commands.fearGreedCmd(ctx);
     default:
       break;
   }
