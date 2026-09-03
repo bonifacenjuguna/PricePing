@@ -460,6 +460,19 @@ async function onCallback(ctx) {
       return undefined;
     }
 
+    // ---- coinselect: multi-select coin picker (tap to check/uncheck) ----
+    if (ns === 'coinselect') {
+      if (a1 === 'start') return commands.coinSelectScreen(ctx);
+      if (a1 === 'toggle') return commands.coinSelectToggle(ctx, a2);
+      if (a1 === 'clear') return commands.coinSelectClear(ctx);
+      if (a1 === 'done') return commands.coinSelectDone(ctx);
+      if (a1 === 'remove') return commands.coinSelectRemove(ctx);
+      if (a1 === 'mutestart') return commands.coinSelectMuteStart(ctx);
+      if (a1 === 'mutedur') return commands.coinSelectMuteDurationPick(ctx, a2);
+      if (a1 === 'thresholdstart') return commands.coinSelectThresholdStart(ctx);
+      return undefined;
+    }
+
     // ---- removecoin:pick|confirm|cancel ----
     if (ns === 'removecoin') {
       if (a1 === 'pick') return commands.removeCoinPick(ctx, a2);

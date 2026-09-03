@@ -76,6 +76,7 @@ async function help(ctx) {
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
       `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL(s) \u00B7 /coins \u2014 both accept several at once (bulk-add pastes multiple lines, removecoin takes SYMBOL SYMBOL ...)\n` +
       `/markets \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20, gainers/losers, watchlist\n` +
+      `Coin settings \u2192 Select multiple \u2014 tap coins to check/uncheck, then remove/mute/set-threshold on all of them at once\n` +
       `/history SYMBOL [channel]\n` +
       `/stats\n` +
       `/channels \u00B7 /addchannel name chat_id \u00B7 /removechannel name \u00B7 /setdefaultchannel name [type]\n` +
@@ -1072,6 +1073,118 @@ async function removeCoinCancel(ctx) {
   pendingRemoveCoin = null;
   await ctx.answerCbQuery('Cancelled');
   await ctx.reply('Cancelled — nothing removed.');
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select coin picker — tap to check/uncheck in place, then apply an
+// action to whatever ended up selected. A third way to scope a bulk
+// action, alongside "all coins" and "one tag" (see the bulk:* wizard).
+// Selection state lives in wizardState (kind 'coinselect') so it survives
+// across however many toggle taps — callback_data only ever carries the
+// one symbol being toggled, never the whole selection.
+// ---------------------------------------------------------------------------
+function coinSelectState() {
+  return wizardState.get('coinselect') || wizardState.start('coinselect', { selected: [] });
+}
+async function coinSelectScreen(ctx) {
+  await ctx.answerCbQuery();
+  const s = coinSelectState();
+  await inlineEdit(ctx, menu.coinSelect(config.coins, s.selected));
+}
+async function coinSelectToggle(ctx, symbol) {
+  const s = coinSelectState();
+  s.selected = s.selected.includes(symbol) ? s.selected.filter((x) => x !== symbol) : [...s.selected, symbol];
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.coinSelect(config.coins, s.selected));
+}
+async function coinSelectClear(ctx) {
+  const s = coinSelectState();
+  s.selected = [];
+  await ctx.answerCbQuery('Cleared');
+  await inlineEdit(ctx, menu.coinSelect(config.coins, s.selected));
+}
+async function coinSelectDone(ctx) {
+  wizardState.clear();
+  await ctx.answerCbQuery();
+  await coinSettingsMenuScreen(ctx);
+}
+async function coinSelectRemove(ctx) {
+  const s = coinSelectState();
+  if (!s.selected.length) {
+    await ctx.answerCbQuery('Nothing selected');
+    return;
+  }
+  await ctx.answerCbQuery();
+  const selected = s.selected;
+  wizardState.clear(); // handing off to the existing remove-coin confirm flow below
+  await stageRemoveCoinBatch(ctx, selected);
+}
+async function coinSelectMuteStart(ctx) {
+  const s = coinSelectState();
+  if (!s.selected.length) {
+    await ctx.answerCbQuery('Nothing selected');
+    return;
+  }
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.coinSelectMuteDuration(s.selected.length));
+}
+async function coinSelectMuteDurationPick(ctx, code) {
+  const s = coinSelectState();
+  if (!s.selected.length) {
+    await ctx.answerCbQuery('Nothing selected');
+    return;
+  }
+  await ctx.answerCbQuery('Muting...');
+  const durationMinutesMap = { '30m': 30, '1h': 60, '4h': 240, '1d': 1440, indef: 10 * 365 * 24 * 60 };
+  const minutes = durationMinutesMap[code] || 60;
+  const until = new Date(Date.now() + minutes * 60000);
+  const selected = s.selected;
+  for (const symbol of selected) {
+    // eslint-disable-next-line no-await-in-loop
+    await coinStateDb.setMuteUntil(symbol, until);
+  }
+  wizardState.clear();
+  await ctx.reply(`Muted ${selected.length} coin(s) for ${code}: ${selected.join(', ')}.`);
+}
+async function coinSelectThresholdStart(ctx) {
+  const s = coinSelectState();
+  if (!s.selected.length) {
+    await ctx.answerCbQuery('Nothing selected');
+    return;
+  }
+  await ctx.answerCbQuery();
+  const prompt = `Send the threshold value to apply to ${s.selected.length} selected coin(s) (e.g. 400 or 2%).`;
+  pendingInput.set('coinselect_threshold', {}, prompt);
+  await ctx.reply(prompt);
+}
+async function coinSelectResumeAfterThresholdText(ctx, text) {
+  const s = wizardState.get('coinselect');
+  if (!s || !s.selected.length) {
+    await ctx.reply('That selection expired \u2014 open Coin settings \u2192 Select multiple to start again.');
+    return;
+  }
+  let amountRaw = text.trim();
+  let type = 'usd';
+  if (amountRaw.endsWith('%')) {
+    type = 'pct';
+    amountRaw = amountRaw.slice(0, -1);
+  } else if (/\bpct\b/i.test(amountRaw)) {
+    type = 'pct';
+    amountRaw = amountRaw.replace(/pct/i, '').trim();
+  }
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    await ctx.reply("That doesn't look like a valid amount. Send e.g. 400 or 2%.");
+    return;
+  }
+  const selected = s.selected;
+  for (const symbol of selected) {
+    // eslint-disable-next-line no-await-in-loop
+    await thresholdsDb.set(symbol, amount, type);
+  }
+  wizardState.clear();
+  const displayAmount = type === 'pct' ? `${amount}%` : `$${amount}`;
+  await ctx.reply(`Threshold set to ${displayAmount} for ${selected.length} coin(s): ${selected.join(', ')}.`);
 }
 
 async function historyMenuScreen(ctx) {
@@ -2994,6 +3107,7 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
   if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
   if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
+  if (pending.action === 'coinselect_threshold') return coinSelectResumeAfterThresholdText(ctx, text);
   if (pending.action === 'broadcastcopy') return runBroadcastCopy(ctx, pending.context.channelName);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
@@ -3072,6 +3186,14 @@ module.exports = {
   removeCoinPick,
   removeCoinConfirmExecute,
   removeCoinCancel,
+  coinSelectScreen,
+  coinSelectToggle,
+  coinSelectClear,
+  coinSelectDone,
+  coinSelectRemove,
+  coinSelectMuteStart,
+  coinSelectMuteDurationPick,
+  coinSelectThresholdStart,
   historyCmd,
   historyMenuScreen,
   historyCoinScreen,

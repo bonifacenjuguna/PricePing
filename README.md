@@ -229,7 +229,10 @@ then executes on send; typing `/cancel` at that prompt backs out cleanly.
   reachable via Automation \u2192 Movers.
 - **Bulk actions** — Automation \u2192 Bulk actions applies a threshold or
   a mute to every coin in a scope (all coins, or one tag) in a single
-  pass instead of one at a time.
+  pass instead of one at a time. For an ad-hoc set instead of a whole tag,
+  Coin settings \u2192 Select multiple is a tap-to-check/uncheck picker
+  (checkmarks update in place) with its own Remove/Mute/Set-threshold
+  actions once you've picked which coins.
 - **Button-driven rule builder** — `/commands \u2192 Automation \u2192 Rules
   \u2192 Add rule` walks through trigger type, coin, direction, minimum
   move, action, and action-specific params (channel, chart period, mute

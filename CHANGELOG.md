@@ -3,6 +3,19 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.8.1 — Multi-select coin picker
+
+**Added**
+- Coin settings \u2192 Select multiple: a tap-to-check/uncheck coin picker
+  (\u2705/\u2B1C, updates in place on every tap) with its own Remove /
+  Mute / Set-threshold actions applied to whatever ended up selected. A
+  third way to scope a bulk action, alongside the existing "all coins" or
+  "one tag" options in the Bulk actions wizard \u2014 this one's for an
+  ad-hoc set that doesn't already share a tag. Remove reuses the same
+  batch-confirm flow as `/removecoin SYM1 SYM2 ...`.
+
+---
+
 ## v0.8.0 — Markets hub: auto-classification, Top 20, batch /removecoin
 
 **Added**

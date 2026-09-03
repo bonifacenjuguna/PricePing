@@ -652,6 +652,37 @@ function marketsCoinList(label, rows, backTarget) {
   return { text, keyboard };
 }
 
+// ---------- Multi-select coin picker (tap to check/uncheck in place) ----------
+// A third way to scope a bulk action, alongside "all coins" and "one tag"
+// (see bulkWizard* above) — pick an arbitrary ad-hoc set by tapping.
+function coinSelect(coins, selected) {
+  const selectedSet = new Set(selected);
+  const text = `Select coins (${selected.length} selected) \u2014 tap to toggle, then pick an action.`;
+  const coinButtons = coins.map((c) => ({
+    text: `${selectedSet.has(c.symbol) ? '\u2705' : '\u2B1C'} ${c.symbol}`,
+    callback_data: `coinselect:toggle:${c.symbol}`,
+  }));
+  const keyboard = [
+    ...chunk(coinButtons, 3),
+    [
+      { text: `\uD83D\uDDD1 Remove (${selected.length})`, callback_data: 'coinselect:remove' },
+      { text: `\uD83D\uDD07 Mute (${selected.length})`, callback_data: 'coinselect:mutestart' },
+    ],
+    [{ text: `\uD83C\uDFAF Set threshold (${selected.length})`, callback_data: 'coinselect:thresholdstart' }],
+    [
+      { text: '\u2716 Clear', callback_data: 'coinselect:clear' },
+      { text: '\u2705 Done', callback_data: 'coinselect:done' },
+    ],
+    HOME_ROW,
+  ];
+  return { text, keyboard };
+}
+
+function coinSelectMuteDuration(selectedCount) {
+  const text = `Mute ${selectedCount} selected coin(s) for how long?`;
+  return { text, keyboard: durationPicker('coinselect:mutedur', [backRow('coinselect:start')]) };
+}
+
 // ---------- Channels ----------
 function channelList(channels, defaultsByType) {
   const lines = channels.length
@@ -773,7 +804,10 @@ function coinSettingsMenu(recentSymbols = []) {
         { text: '\uD83C\uDFAF All milestones', callback_data: 'nav:milestones' },
         { text: '\uD83D\uDCCB View all coins', callback_data: 'nav:coinlist' },
       ],
-      [{ text: '\u2795 Add coin', callback_data: 'addcoin:start' }],
+      [
+        { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
+        { text: '\u2611 Select multiple', callback_data: 'coinselect:start' },
+      ],
     ],
   });
   return { text, keyboard };
@@ -1077,6 +1111,8 @@ module.exports = {
   moversChannelPicker,
   marketsHub,
   marketsCoinList,
+  coinSelect,
+  coinSelectMuteDuration,
   channelList,
   channelTypePicker,
   channelTypeDefaultPicker,
