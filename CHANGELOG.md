@@ -3,6 +3,26 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.12.1 — Fix crash on Bot Mode, Advanced limits, Full factory reset, Bulk delete
+
+**Fixed**
+- `botModePicker`, `limitsScreen`, `factoryResetConfirm`, and
+  `bulkWizardDeleteConfirm` were added to `views/menu.js` in the last two
+  releases but never added to that file's `module.exports` — so calling
+  any of them from `handlers/commands.js` returned `undefined` instead of
+  a screen, and the handler crashed immediately trying to read `.text`/
+  `.keyboard` off it. In practice this meant `/mode`, `/limits`, Safety &
+  Admin → Full factory reset, and Bulk actions → Delete all threw as soon
+  as they were opened. No behavior changed — these functions worked
+  correctly once actually reachable; they just weren't wired to the
+  outside world. Everything else added in v0.11.0/v0.12.0 (Bot Modes,
+  Advanced limits values/bounds, factory reset logic, bulk unmute/label/
+  delete execution) was already correct and untouched.
+
+**Migration note:** none — no schema changes.
+
+---
+
 ## v0.12.0 — Bulk actions expanded
 
 **Added**
