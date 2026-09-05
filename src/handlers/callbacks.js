@@ -59,6 +59,12 @@ async function onCallback(ctx) {
           return commands.moversScreen(ctx);
         case 'markets':
           return commands.marketsHubScreen(ctx);
+        case 'publish':
+          return commands.publishHubScreen(ctx);
+        case 'safetyadmin':
+          return commands.safetyAdminHubScreen(ctx);
+        case 'heldback':
+          return commands.heldBackAlertsScreen(ctx);
         case 'feargreed':
           return commands.fearGreedScreen(ctx);
         case 'tags':
@@ -384,6 +390,20 @@ async function onCallback(ctx) {
       if (a1 === 'edit') {
         return commands.ruleEditStart(ctx, a2);
       }
+      return undefined;
+    }
+
+    // ---- heldback: clear the held-back alerts log ----
+    if (ns === 'heldback') {
+      if (a1 === 'clear') return commands.heldBackAlertsClear(ctx);
+      return undefined;
+    }
+
+    // ---- tz: timezone picker ----
+    if (ns === 'tz') {
+      if (a1 === 'start') return commands.timezoneStart(ctx);
+      if (a1 === 'set') return commands.timezonePick(ctx, data.split(':').slice(2).join(':'));
+      if (a1 === 'custom') return commands.timezoneCustomStart(ctx);
       return undefined;
     }
 

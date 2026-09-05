@@ -1,27 +1,23 @@
 {
-  "name": "gitrohub",
-  "version": "0.7.3",
-  "description": "GitroHub \u2014 GitHub from Telegram. Manage your GitHub repos directly from a Telegram bot.",
-  "main": "src/index.js",
+  "name": "priceping",
+  "version": "0.9.0",
+  "description": "Telegram crypto price-alert bot for @PricePing",
+  "main": "src/bot.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "db:migrate": "node src/db/migrate.js"
+    "start": "node src/bot.js",
+    "migrate": "node scripts/migrate.js",
+    "prepare-assets": "node scripts/prepare-assets.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@octokit/rest": "^20.1.1",
-    "adm-zip": "^0.5.12",
-    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3",
     "express": "^4.19.2",
-    "fuse.js": "^7.0.0",
-    "jsonwebtoken": "^9.0.2",
-    "pg": "^8.12.0",
-    "redis": "^4.7.0",
-    "telegraf": "^4.16.3"
-  },
-  "license": "MIT"
+    "pg": "^8.11.5",
+    "ioredis": "^5.4.1",
+    "sharp": "^0.33.4",
+    "dotenv": "^16.4.5"
+  }
 }

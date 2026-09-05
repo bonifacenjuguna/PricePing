@@ -1,67 +1,62 @@
 require('dotenv').config();
-const crypto = require('crypto');
+const { coins, defaultThresholds, assetsDir, logosDir } = require('./coins');
 
 function required(name) {
   const val = process.env[name];
   if (!val) {
-    console.error(`❌ Missing required environment variable: ${name}`);
-    console.error('   Check your .env file against .env.example');
+    // eslint-disable-next-line no-console
+    console.error(`Missing required environment variable: ${name}`);
     process.exit(1);
   }
   return val;
 }
 
 module.exports = {
-  BOT_TOKEN: required('BOT_TOKEN'),
-  OWNER_ID: Number(required('OWNER_ID')),
+  botToken: required('BOT_TOKEN'),
+  botName: process.env.BOT_NAME || 'PricePing',
+  adminId: Number(required('ADMIN_TELEGRAM_ID')),
+  adminName: process.env.ADMIN_NAME || 'Admin',
+  // Read-only co-admins — comma-separated Telegram IDs, e.g. "111,222".
+  // See VIEWER_COMMANDS in handlers/middleware.js for exactly what they can run.
+  viewerIds: (process.env.VIEWER_TELEGRAM_IDS || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0),
+  channelId: required('CHANNEL_ID'), // e.g. @PricePing or -100xxxxxxxxxx
 
-  GITHUB_CLIENT_ID: required('GITHUB_CLIENT_ID'),
-  GITHUB_CLIENT_SECRET: required('GITHUB_CLIENT_SECRET'),
+  webhookUrl: process.env.WEBHOOK_URL || null,
+  webhookPath: process.env.WEBHOOK_PATH || '/telegram-webhook',
+  webhookSecret: process.env.WEBHOOK_SECRET || null,
+  port: Number(process.env.PORT) || 3000,
 
-  BASE_URL: required('BASE_URL').replace(/\/$/, ''),
-  PORT: Number(process.env.PORT || 3000),
+  databaseUrl: required('DATABASE_URL'),
+  redisUrl: required('REDIS_URL'),
 
-  SESSION_JWT_SECRET: required('SESSION_JWT_SECRET'),
-  TOKEN_ENCRYPTION_KEY: required('TOKEN_ENCRYPTION_KEY'),
+  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS) || 30000,
+  cooldownMinutes: Number(process.env.COOLDOWN_MINUTES) || 5,
+  binanceFailureAlertThreshold: Number(process.env.BINANCE_FAILURE_ALERT_THRESHOLD) || 10,
 
-  DATABASE_URL: required('DATABASE_URL'),
-  REDIS_URL: required('REDIS_URL'),
+  memoryLimitMb: Number(process.env.MEMORY_LIMIT_MB) || 220,
+  memoryCheckIntervalMs: Number(process.env.MEMORY_CHECK_INTERVAL_MS) || 60000,
+  memoryWarnRatio: Number(process.env.MEMORY_WARN_RATIO) || 0.8,
 
-  BOT_VERSION: process.env.BOT_VERSION || '0.7.3',
+  sendDelayMs: Number(process.env.SEND_DELAY_MS) || 250,
+  telegramSendRetries: 1,
 
-  // Hard limits (from design spec)
-  MAX_ZIP_SIZE_BYTES: 1 * 1024 * 1024, // 1MB
-  MAX_ZIP_UNCOMPRESSED_BYTES: 15 * 1024 * 1024, // 15MB decompressed — zip bomb guard
-  MAX_SINGLE_FILE_BYTES: 5 * 1024 * 1024, // 5MB — single-file uploads (not zips)
-  LOG_RETENTION_DAYS: 90, // activity_log + access_log rows older than this get pruned daily
-  MAX_TELEGRAM_FILE_SIZE_BYTES: 20 * 1024 * 1024, // 20MB (bot send limit)
-  REPOS_PER_PAGE: 3, // richer card format needs fewer per page to stay glanceable on a phone
-  FILES_PER_PAGE: 8,
-  ACTIVITY_PER_PAGE: 6,
-  // WIZARD_SESSION_TTL_SECONDS and SESSION_TTL_SECONDS are deliberately
-  // separate constants, not one shared value. WIZARD_SESSION_TTL_SECONDS
-  // governs only abandoned-upload file buffers (in-process memory,
-  // correctly short-lived). SESSION_TTL_SECONDS is the actual Redis TTL on
-  // the GLOBAL Telegraf session store — every ctx.session field, bot-wide
-  // (ctx.session.currentRepo, bulk selections, etc.), not just active
-  // wizards. A single shared short value would mean things like "which
-  // repo you're currently viewing" silently vanishing after a short idle
-  // gap, even with Repo View's own buttons still on screen. Kept separate,
-  // with the general one long enough to survive normal gaps in checking
-  // the bot throughout a day.
-  WIZARD_SESSION_TTL_SECONDS: 30 * 60, // 30 min — abandoned upload file buffers only
-  SESSION_TTL_SECONDS: Number(process.env.SESSION_TTL_SECONDS || 24 * 60 * 60), // 24h — general ctx.session state
+  // --- v0.2.0 additions ---
+  maxAlertsPerHour: Number(process.env.MAX_ALERTS_PER_HOUR) || 20,
 
-  // Memory management — tuned for Railway's 512MB free-tier ceiling.
-  // See README "Memory & stability" section for the full explanation.
-  PG_POOL_MAX: Number(process.env.PG_POOL_MAX || 3),
-  MEMORY_WATCHDOG_MB: Number(process.env.MEMORY_WATCHDOG_MB || 400),
-  MEMORY_WATCHDOG_CHECK_INTERVAL_MS: 30 * 1000,
+  digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 9),
+  digestEnabled: (process.env.DIGEST_ENABLED ?? 'true') === 'true',
 
-  // Verifies incoming webhook requests actually came from Telegram. Falls
-  // back to a value derived from SESSION_JWT_SECRET if not explicitly set,
-  // so the bot still works without extra setup — but a dedicated secret
-  // (openssl rand -hex 24) is strongly recommended for a public URL.
-  TELEGRAM_WEBHOOK_SECRET: process.env.TELEGRAM_WEBHOOK_SECRET ||
-    crypto.createHash('sha256').update(process.env.SESSION_JWT_SECRET || 'fallback').digest('hex').slice(0, 32),
+  heartbeatCheckIntervalMs: Number(process.env.HEARTBEAT_CHECK_INTERVAL_MS) || 5 * 60 * 1000,
+  heartbeatStaleMultiplier: Number(process.env.HEARTBEAT_STALE_MULTIPLIER) || 3,
+
+  defaultMuteMs: 60 * 60 * 1000, // /mute SYMBOL with no duration given
+
+  coins,
+  defaultThresholds,
+
+  assetsDir,
+  logosDir,
 };

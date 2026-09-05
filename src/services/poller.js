@@ -10,12 +10,12 @@ const channelsDb = require('../db/channels');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
 const events = require('../db/events');
+const heldBackAlertsDb = require('../db/heldBackAlerts');
 const telegramSender = require('./telegramSender');
 const rulesEngine = require('./rulesEngine');
 
 let consecutiveFailures = 0;
 let failureAlertSent = false;
-let capNotifiedThisWindow = false;
 let noDefaultChannelWarned = false;
 const consecutiveMisses = new Map(); // symbol -> count of ticks with no price returned
 const delistWarned = new Set(); // symbols already flagged this "episode" — resets when price returns
@@ -179,8 +179,19 @@ async function tickInner(bot) {
     if (!muteActive(state.pausedUntil) && milestoneChannel) {
       const milestone = checkMilestone(coin, price, milestoneInfo.step, state.lastMilestone);
       if (milestone) {
-        await coinStateDb.setLastMilestone(coin.symbol, milestone.level);
-        if (!milestone.seedOnly && !quietNow) {
+        if (milestone.seedOnly) {
+          await coinStateDb.setLastMilestone(coin.symbol, milestone.level);
+        } else if (!quietNow) {
+          // Deliberately NOT calling coinStateDb.setLastMilestone() here —
+          // that only happens after this alert actually sends (see the
+          // send loop below). Recording it here, before the hourly cap is
+          // even applied, meant a milestone cut by the cap could never be
+          // detected again next tick (state already showed it as "done")
+          // — silently and permanently lost despite the cap's own comment
+          // claiming otherwise. Threshold alerts never had this bug since
+          // their baseline (coinStateDb.recordAlert) was already
+          // post-send-only.
+          //
           // "Big" milestone = crossing a multiple of 10x the step (e.g.
           // every $5,000 for a coin with a $500 step) — gets a more
           // prominent card treatment, see cardRenderer.js.
@@ -235,27 +246,40 @@ async function tickInner(bot) {
 
   // Hourly send cap — a safety valve against a flash-crash spamming the
   // channel every `cooldownMinutes` for hours on end. Trims the queue for
-  // THIS tick only; nothing is lost permanently, coins just wait for the
-  // next tick once the rolling window has room again.
+  // THIS tick only. Threshold alerts naturally retry next tick (their
+  // baseline only advances on actual send, see below) and milestones now
+  // do too (see the fix above) — nothing here should be permanently lost
+  // anymore, but every held-back alert is logged either way so there's an
+  // actual visible record instead of just a warning message with nothing
+  // to show for it (Safety & Admin \u2192 Held-back alerts).
   const sentLastHour = await alertsLogDb.countLastHour();
   const room = Math.max(config.maxAlertsPerHour - sentLastHour, 0);
   let capped = toSend;
   if (toSend.length > room) {
     capped = toSend.slice(0, room);
-    if (!capNotifiedThisWindow) {
-      capNotifiedThisWindow = true;
+    const overflow = toSend.slice(room);
+    for (const alert of overflow) {
+      // eslint-disable-next-line no-await-in-loop
+      await heldBackAlertsDb.record(alert.coin.symbol, alert.alertType, `hourly cap (${config.maxAlertsPerHour}) reached`);
+    }
+    // DB-backed dedup, not an in-memory flag — this bot gets redeployed
+    // often (a zip upload, not a long-lived unchanged process), and an
+    // in-memory flag resets on every restart, which was refiring this
+    // warning mid-episode on every redeploy rather than once per hour.
+    const lastNotified = await settingsDb.getLastCapNotifiedAt();
+    const dueForNotify = !lastNotified || Date.now() - lastNotified.getTime() > 55 * 60 * 1000;
+    if (dueForNotify) {
+      await settingsDb.setLastCapNotifiedAt(new Date());
       await events.record('alert_cap_hit', `${toSend.length} qualified, only ${room} sent (hourly cap ${config.maxAlertsPerHour})`);
       try {
         await bot.telegram.sendMessage(
           config.adminId,
-          `Hourly alert cap (${config.maxAlertsPerHour}) reached — ${toSend.length - room} alert(s) held back this tick.`
+          `Hourly alert cap (${config.maxAlertsPerHour}) reached \u2014 ${toSend.length - room} alert(s) held back this tick. See Safety & Admin \u2192 Held-back alerts, or /heldback.`
         );
       } catch {
         /* non-fatal */
       }
     }
-  } else if (room > 0) {
-    capNotifiedThisWindow = false;
   }
 
   // Sequential, with a small delay between each — stays comfortably under
@@ -266,6 +290,8 @@ async function tickInner(bot) {
     if (sent) {
       if (alert.alertType === 'threshold') {
         await coinStateDb.recordAlert(alert.coin.symbol, alert.price);
+      } else if (alert.alertType === 'milestone') {
+        await coinStateDb.setLastMilestone(alert.coin.symbol, alert.milestoneLevel);
       }
       await alertsLogDb.record(
         alert.coin.symbol,

@@ -17,6 +17,7 @@ const schedulesDb = require('../db/schedules');
 const rulesDb = require('../db/rules');
 const coinTagsDb = require('../db/coinTags');
 const coinMetaDb = require('../db/coinMeta');
+const heldBackAlertsDb = require('../db/heldBackAlerts');
 const categorize = require('../services/categorize');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
@@ -37,6 +38,7 @@ const recentCoins = require('../services/recentCoins');
 const undoStack = require('../services/undoStack');
 
 const format = require('../utils/format');
+const timezone = require('../utils/timezone');
 const { parseDuration, formatRemaining } = require('../utils/duration');
 const logger = require('../utils/logger');
 
@@ -76,6 +78,7 @@ async function help(ctx) {
       `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
+      `/settimezone [IANA_TZ] \u2014 used by /schedule and /quiethours (both take local time now, not UTC) \u00B7 /heldback \u2014 alerts held back by the hourly cap\n` +
       `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL(s) \u00B7 /coins \u2014 both accept several at once (bulk-add pastes multiple lines, removecoin takes SYMBOL SYMBOL ...)\n` +
       `/markets \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20, gainers/losers, watchlist\n` +
       `Coin settings \u2192 Select multiple \u2014 tap coins to check/uncheck, then remove/mute/set-threshold on all of them at once\n` +
@@ -121,7 +124,34 @@ async function home(ctx) {
 }
 
 async function hubCmd(ctx) {
-  await inlineReply(ctx, menu.hub());
+  // Was a separate, smaller screen than Home (missing Settings, Broadcast,
+  // Markets, Movers as of pre-v0.9.0) — now the same dashboard, just
+  // reached via /commands instead of /start. One consistent top-level
+  // screen everywhere, instead of two different partial views of the
+  // same bot.
+  await home(ctx);
+}
+async function publishHubScreen(ctx) {
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.publishHub());
+}
+async function safetyAdminHubScreen(ctx) {
+  await ctx.answerCbQuery();
+  await inlineEdit(ctx, menu.safetyAdminHub());
+}
+async function heldBackAlertsCmd(ctx) {
+  const rows = await heldBackAlertsDb.recent(20);
+  await inlineReply(ctx, menu.heldBackAlerts(rows));
+}
+async function heldBackAlertsScreen(ctx) {
+  await ctx.answerCbQuery();
+  const rows = await heldBackAlertsDb.recent(20);
+  await inlineEdit(ctx, menu.heldBackAlerts(rows));
+}
+async function heldBackAlertsClear(ctx) {
+  await heldBackAlertsDb.clear();
+  await ctx.answerCbQuery('Cleared');
+  await inlineEdit(ctx, menu.heldBackAlerts([]));
 }
 
 async function pricesCmd(ctx) {
@@ -146,9 +176,50 @@ async function statsCmd(ctx) {
 }
 
 async function settingsCmd(ctx) {
-  const [compactCards, quietHours] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours()]);
-  await inlineReply(ctx, menu.settings({ compactCards, quietHours }));
+  const [compactCards, quietHours, tz] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours(), settingsDb.getTimezone()]);
+  await inlineReply(ctx, menu.settings({ compactCards, quietHours, tz }));
 }
+async function timezoneStart(ctx) {
+  await ctx.answerCbQuery();
+  const tz = await settingsDb.getTimezone();
+  await inlineEdit(ctx, menu.timezonePicker(tz));
+}
+async function timezonePick(ctx, tz) {
+  if (!timezone.isValidTimezone(tz)) {
+    await ctx.answerCbQuery('Invalid timezone');
+    return;
+  }
+  await settingsDb.setTimezone(tz);
+  eventsDb.recordAudit(`timezone set to ${tz}`).catch(() => {});
+  await ctx.answerCbQuery(`Timezone set to ${tz}`);
+  await settingsCmd(ctx);
+}
+async function timezoneCustomStart(ctx) {
+  await ctx.answerCbQuery();
+  const prompt = 'Send an IANA timezone name, e.g. "America/Sao_Paulo" or "Asia/Karachi" (see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones for the full list).';
+  pendingInput.set('settimezone', {}, prompt);
+  await ctx.reply(prompt);
+}
+async function runSetTimezone(ctx, text) {
+  const tz = text.trim();
+  if (!timezone.isValidTimezone(tz)) {
+    await ctx.reply(`"${tz}" isn't a recognized timezone name. Check the spelling against the IANA list (e.g. "America/Sao_Paulo", "Asia/Karachi") and try again.`);
+    return;
+  }
+  await settingsDb.setTimezone(tz);
+  eventsDb.recordAudit(`timezone set to ${tz}`).catch(() => {});
+  await ctx.reply(`Timezone set to ${tz}. /schedule and /quiethours now read/display in this timezone.`);
+}
+async function setTimezoneCmd(ctx) {
+  const tz = ctx.message.text.replace(/^\/settimezone(@\w+)?\s*/, '').trim();
+  if (!tz) {
+    const current = await settingsDb.getTimezone();
+    await ctx.reply(`Current timezone: ${current}\nUsage: /settimezone America/New_York (IANA name), or use Settings \u2192 Set timezone for a picker.`);
+    return;
+  }
+  await runSetTimezone(ctx, tz);
+}
+
 async function usageCmd(ctx) {
   const commandUsageDb = require('../db/commandUsage');
   const rows = await commandUsageDb.getAll();
@@ -548,20 +619,29 @@ async function quietHoursCmd(ctx) {
     await ctx.reply('Quiet hours turned off.');
     return;
   }
-  const start = Number(parts[1]);
-  const end = Number(parts[2]);
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > 23 || end < 0 || end > 23) {
+  const startLocal = Number(parts[1]);
+  const endLocal = Number(parts[2]);
+  const tz = await settingsDb.getTimezone();
+  if (!Number.isInteger(startLocal) || !Number.isInteger(endLocal) || startLocal < 0 || startLocal > 23 || endLocal < 0 || endLocal > 23) {
     const current = await settingsDb.getQuietHours();
+    let currentLine = 'off';
+    if (current) {
+      const local = timezone.utcToLocal(current.startHourUtc, 0, tz);
+      const localEnd = timezone.utcToLocal(current.endHourUtc, 0, tz);
+      currentLine = `${local.hour}:00-${localEnd.hour}:00${tz === 'UTC' ? ' UTC' : ` ${tz}`}`;
+    }
     await ctx.reply(
-      `Usage: /quiethours START END (UTC hours, 0-23) \u2014 e.g. /quiethours 0 7 for midnight-7am\nOr: /quiethours off\n\n` +
-        `Currently: ${current ? `${current.startHourUtc}:00-${current.endHourUtc}:00 UTC` : 'off'}`
+      `Usage: /quiethours START END (your local time${tz === 'UTC' ? '' : `, ${tz}`}, hours 0-23) \u2014 e.g. /quiethours 0 7 for midnight-7am\nOr: /quiethours off\n\n` +
+        `Currently: ${currentLine}`
     );
     return;
   }
-  await settingsDb.setQuietHours(start, end);
-  eventsDb.recordAudit(`quiet hours: ${start}:00-${end}:00 UTC`).catch(() => {});
+  const startUtc = timezone.localToUtc(startLocal, 0, tz).hour;
+  const endUtc = timezone.localToUtc(endLocal, 0, tz).hour;
+  await settingsDb.setQuietHours(startUtc, endUtc);
+  eventsDb.recordAudit(`quiet hours: ${startLocal}:00-${endLocal}:00 local (${tz})`).catch(() => {});
   await ctx.reply(
-    `Quiet hours set to ${start}:00-${end}:00 UTC \u2014 threshold and milestone alerts will be held during that window (post/chart schedules too; digests are exempt) and catch up once it ends.`
+    `Quiet hours set to ${startLocal}:00-${endLocal}:00${tz === 'UTC' ? ' UTC' : ` ${tz}`} \u2014 threshold and milestone alerts will be held during that window (post/chart schedules too; digests are exempt) and catch up once it ends.`
   );
 }
 
@@ -1628,14 +1708,18 @@ async function automationHubScreen(ctx) {
   await inlineEdit(ctx, menu.automationHub());
 }
 async function schedulesScreen(ctx) {
-  await inlineEdit(ctx, menu.scheduleList(await schedulesDb.getAll()));
+  const [all, tz] = await Promise.all([schedulesDb.getAll(), settingsDb.getTimezone()]);
+  await inlineEdit(ctx, menu.scheduleList(all, tz));
 }
 async function schedulesListCmd(ctx) {
-  await inlineReply(ctx, menu.scheduleList(await schedulesDb.getAll()));
+  const [all, tz] = await Promise.all([schedulesDb.getAll(), settingsDb.getTimezone()]);
+  await inlineReply(ctx, menu.scheduleList(all, tz));
 }
 async function scheduleAddStart(ctx) {
+  const tz = await settingsDb.getTimezone();
   const prompt =
-    'Send: <post|chart|digest> [SYMBOL] [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n\n' +
+    `Send: <post|chart|digest> [SYMBOL] [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n` +
+    `(HH:MM is your local time \u2014 currently set to ${tz}. /settimezone to change it.)\n\n` +
     'Examples:\n' +
     'post BTC main daily 09:00\n' +
     'chart ETH 24h vip daily 18:30\n' +
@@ -1686,18 +1770,39 @@ async function runAddSchedule(ctx, parts, editId = null) {
   const timeStr = parts[idx++] || '';
   const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
   if (!timeMatch) {
-    await ctx.reply('Time must be HH:MM (UTC), e.g. 09:00');
+    const tz = await settingsDb.getTimezone();
+    await ctx.reply(`Time must be HH:MM (your local time${tz === 'UTC' ? '' : `, ${tz}`}), e.g. 09:00`);
     return;
   }
-  const atHourUtc = Number(timeMatch[1]);
-  const atMinuteUtc = Number(timeMatch[2]);
-  let dayOfWeek = null;
+  const hourLocal = Number(timeMatch[1]);
+  const minuteLocal = Number(timeMatch[2]);
+  if (hourLocal > 23 || minuteLocal > 59) {
+    await ctx.reply('Hour must be 0-23 and minute 0-59.');
+    return;
+  }
+  let dayOfWeekLocal = null;
   if (cadence === 'weekly') {
-    dayOfWeek = Number(parts[idx++]);
-    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+    dayOfWeekLocal = Number(parts[idx++]);
+    if (!Number.isInteger(dayOfWeekLocal) || dayOfWeekLocal < 0 || dayOfWeekLocal > 6) {
       await ctx.reply('Weekly schedules need a day of week 0-6 (0=Sunday) as the last value.');
       return;
     }
+  }
+
+  // Hourly schedules only use the minute-past-the-hour (see scheduleList's
+  // "hourly :MM" display) — that's relative, not an absolute time of day,
+  // so timezone conversion doesn't apply to it. Daily/weekly need the
+  // actual local->UTC conversion since they fire at a specific wall-clock
+  // moment.
+  let atHourUtc = hourLocal;
+  let atMinuteUtc = minuteLocal;
+  let dayOfWeek = dayOfWeekLocal;
+  if (cadence !== 'hourly') {
+    const tz = await settingsDb.getTimezone();
+    const converted = timezone.localToUtc(hourLocal, minuteLocal, tz, dayOfWeekLocal);
+    atHourUtc = converted.hour;
+    atMinuteUtc = converted.minute;
+    dayOfWeek = converted.dayOfWeek;
   }
 
   const fields = { kind, symbol, period, channelName: channel.name, cadence, atMinuteUtc, atHourUtc, dayOfWeek };
@@ -3110,6 +3215,7 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
   if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
   if (pending.action === 'coinselect_threshold') return coinSelectResumeAfterThresholdText(ctx, text);
+  if (pending.action === 'settimezone') return runSetTimezone(ctx, text);
   if (pending.action === 'broadcastcopy') return runBroadcastCopy(ctx, pending.context.channelName);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
@@ -3125,10 +3231,19 @@ module.exports = {
   help,
   home,
   hubCmd,
+  publishHubScreen,
+  safetyAdminHubScreen,
+  heldBackAlertsCmd,
+  heldBackAlertsScreen,
+  heldBackAlertsClear,
   pricesCmd,
   statsCmd,
   settingsCmd,
   usageCmd,
+  timezoneStart,
+  timezonePick,
+  timezoneCustomStart,
+  setTimezoneCmd,
   usageScreen,
   auditLogCmd,
   auditLogScreen,

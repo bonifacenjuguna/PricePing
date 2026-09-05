@@ -67,14 +67,19 @@ async function setLastDigestDate(dateStr) {
 
 // Up to 3 shortcut keys shown as an extra row on Home — see
 // views/menu.js's PINNABLE_ACTIONS catalog for the fixed set of choices.
+// Defaults to a sensible starter set rather than empty, since Post/Movers/
+// Test now sit one tap deeper (under Publish/Markets/Safety) than they
+// used to on the flat pre-v0.9.0 layout — still explicitly overridable via
+// Settings → Quick actions.
+const DEFAULT_PINNED_ACTIONS = ['postmenu', 'movers', 'test'];
 async function getPinnedActions() {
   const raw = await get('pinned_actions');
-  if (!raw) return [];
+  if (!raw) return DEFAULT_PINNED_ACTIONS;
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed : DEFAULT_PINNED_ACTIONS;
   } catch {
-    return [];
+    return DEFAULT_PINNED_ACTIONS;
   }
 }
 
@@ -121,6 +126,31 @@ async function clearQuietHours() {
   return remove('quiet_hours');
 }
 
+// Admin's local timezone (IANA name, e.g. "Africa/Lagos") — used to
+// convert /schedule and /quiethours between what's typed/displayed
+// (local time) and what's stored (UTC, see utils/timezone.js). Defaults
+// to UTC so existing behavior is unchanged until explicitly set.
+async function getTimezone() {
+  const raw = await get('timezone');
+  return raw || 'UTC';
+}
+async function setTimezone(tz) {
+  return set('timezone', tz);
+}
+
+// Hourly-alert-cap notification dedup — DB-backed specifically so a
+// redeploy (which happens often; this bot's config is a plain zip upload,
+// not a long-running unchanged process) doesn't reset an in-memory flag
+// and cause the "cap reached" warning to refire mid-episode just because
+// the process restarted. See poller.js.
+async function getLastCapNotifiedAt() {
+  const raw = await get('last_cap_notified_at');
+  return raw ? new Date(raw) : null;
+}
+async function setLastCapNotifiedAt(date) {
+  return set('last_cap_notified_at', date.toISOString());
+}
+
 // Compact card style — a smaller card (no logo circle, no subtitle) for
 // channels that want less visual noise. Global toggle, not per-channel.
 async function getCompactCards() {
@@ -152,6 +182,10 @@ module.exports = {
   getQuietHours,
   setQuietHours,
   clearQuietHours,
+  getTimezone,
+  setTimezone,
+  getLastCapNotifiedAt,
+  setLastCapNotifiedAt,
   getCompactCards,
   setCompactCards,
 };

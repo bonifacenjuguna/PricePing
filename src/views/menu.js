@@ -1,9 +1,9 @@
 const config = require('../config');
 const format = require('../utils/format');
+const timezone = require('../utils/timezone');
 const { formatRemaining } = require('../utils/duration');
 
 const HOME_ROW = [{ text: '\uD83C\uDFE0 Home', callback_data: 'nav:home' }]; // 🏠
-const HUB_ROW = [{ text: '\u2630 All commands', callback_data: 'nav:hub' }]; // ☰
 
 // Fixed catalog for the pinnable "⭐ Quick actions" row on Home — kept to a
 // short, safe set of navigation-only shortcuts (no destructive actions)
@@ -21,7 +21,7 @@ const PINNABLE_ACTIONS = [
   { key: 'movers', label: '\uD83D\uDCC9 Movers', cb: 'nav:movers' },
   { key: 'feargreed', label: '\uD83D\uDE28 Fear & Greed', cb: 'nav:feargreed' },
   { key: 'automation', label: '\uD83D\uDCC5 Automation', cb: 'nav:automation' },
-  { key: 'coinsettings', label: '\u2699 Coin settings', cb: 'nav:coinsettings' },
+  { key: 'coinsettings', label: '\uD83E\uDE99 Coins', cb: 'nav:coinsettings' },
 ];
 
 function chunk(arr, size) {
@@ -126,19 +126,18 @@ function home({ paused, pausedUntil, uptimeSeconds, alertsToday, lastEvent, hear
       { text: '\uD83E\uDDEA Test', callback_data: 'nav:test' },
     ],
     [
-      { text: '\uD83D\uDCB0 Post', callback_data: 'nav:postmenu' },
-      { text: '\uD83D\uDCC8 Chart', callback_data: 'nav:chartmenu' },
+      { text: '\uD83D\uDCCA Markets', callback_data: 'nav:markets' },
+      { text: '\uD83E\uDE99 Coins', callback_data: 'nav:coinsettings' },
     ],
     [
-      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
-      { text: '\uD83D\uDCC9 Movers', callback_data: 'nav:movers' },
+      { text: '\uD83D\uDCE4 Publish', callback_data: 'nav:publish' },
+      { text: '\u26A1 Automation', callback_data: 'nav:automation' },
     ],
     [
-      { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
-      { text: '\u2699 Settings', callback_data: 'nav:settings' },
+      { text: '\uD83D\uDCE1 Channels', callback_data: 'nav:channels' },
+      { text: '\uD83D\uDEE1 Safety & Admin', callback_data: 'nav:safetyadmin' },
     ],
     [{ text: killSwitchActive ? '\u267B Restore (kill switch active)' : '\uD83D\uDED1 Kill switch', callback_data: 'action:killswitch' }],
-    HUB_ROW,
   ];
 
   return { text, keyboard };
@@ -153,47 +152,6 @@ function formatUptime(seconds) {
 }
 
 // ---------- Hub ----------
-function hub() {
-  const text =
-    `PricePing \u2014 all commands\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
-    `Tap a section, or use any slash command directly \u2014 /help lists them all.`;
-
-  const keyboard = [
-    [
-      { text: '\uD83D\uDCB0 Post & Chart', callback_data: 'nav:postmenu' },
-      { text: '\u2699 Coin settings', callback_data: 'nav:coinsettings' },
-    ],
-    [
-      { text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' },
-      { text: '\uD83D\uDCC8 Movers', callback_data: 'nav:movers' },
-    ],
-    [
-      { text: '\uD83D\uDCC5 Automation', callback_data: 'nav:automation' },
-      { text: '\uD83D\uDCE1 Channels', callback_data: 'nav:channels' },
-    ],
-    [
-      { text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' },
-      { text: '\uD83D\uDE28 Fear & Greed', callback_data: 'nav:feargreed' },
-    ],
-    [
-      { text: '\uD83D\uDD07 Mute', callback_data: 'nav:mutemenu' },
-      { text: '\u23F8 Pause/Resume', callback_data: 'nav:pausemenu' },
-    ],
-    [
-      { text: '\u270F Captions', callback_data: 'nav:captiontypes' },
-      { text: '\uD83E\uDDEA Test', callback_data: 'nav:test' },
-    ],
-    [
-      { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
-      { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
-    ],
-    [{ text: '\u2699\uFE0F Settings', callback_data: 'nav:settings' }],
-    [{ text: '\u267B Reset', callback_data: 'nav:reset' }],
-    HOME_ROW,
-  ];
-  return { text, keyboard };
-}
-
 // ---------- Prices ----------
 function prices(priceMap) {
   const lines = config.coins
@@ -214,9 +172,22 @@ function prices(priceMap) {
 }
 
 // ---------- Post / Chart menus ----------
+function publishHub() {
+  const text = '\uD83D\uDCE4 Publish \u2014 what do you want to send?';
+  const keyboard = [
+    [
+      { text: '\uD83D\uDCB0 Post price update', callback_data: 'nav:postmenu' },
+      { text: '\uD83D\uDCC8 Post a chart', callback_data: 'nav:chartmenu' },
+    ],
+    [{ text: '\uD83D\uDCE2 Broadcast (any media)', callback_data: 'nav:broadcastmenu' }],
+    ...footer('nav:hub'),
+  ];
+  return { text, keyboard };
+}
+
 function postMenu(recentSymbols = []) {
   const text = 'Post a price update \u2014 pick a coin:';
-  return { text, keyboard: coinGrid('post:coin', { recentSymbols }) };
+  return { text, keyboard: coinGrid('post:coin', { recentSymbols, parentCallback: 'nav:publish' }) };
 }
 
 function postChannelPicker(symbol, channels) {
@@ -226,7 +197,7 @@ function postChannelPicker(symbol, channels) {
 
 function chartMenu(recentSymbols = []) {
   const text = 'Chart a coin \u2014 pick one:';
-  return { text, keyboard: coinGrid('chart:coin', { recentSymbols }) };
+  return { text, keyboard: coinGrid('chart:coin', { recentSymbols, parentCallback: 'nav:publish' }) };
 }
 
 // Asked right after picking a coin, before the period — lets the user
@@ -277,7 +248,7 @@ function thresholds(thresholdMap) {
     `Tap a coin below for the full settings screen (threshold, milestone, cooldown, mute).`;
 
   const coinButtons = config.coins.map((c) => ({ text: c.symbol, callback_data: `coin:settings:${c.symbol}` }));
-  const keyboard = [...chunk(coinButtons, 3), HOME_ROW];
+  const keyboard = [...chunk(coinButtons, 3), ...footer('nav:coinsettings')];
   return { text, keyboard };
 }
 
@@ -333,7 +304,7 @@ function coinSettings(symbol, { threshold, milestone, cooldownMinutes, isDefault
     [{ text: '\uD83D\uDCDC History', callback_data: `history:coin:${symbol}` }],
     [{ text: inWatchlist ? '\u2B50 Remove from watchlist' : '\u2606 Add to watchlist', callback_data: `markets:watch:${symbol}` }],
     isCustom ? [{ text: '\uD83D\uDDD1 Remove coin', callback_data: `removecoin:pick:${symbol}` }] : [],
-    ...footer('nav:thresholds'),
+    ...footer('nav:coinsettings'),
   ].filter((row) => row.length);
 
   return { text, keyboard };
@@ -368,7 +339,7 @@ function muteMenu(recentSymbols = [], mutedMap = {}) {
     text: mutedMap[c.symbol] && new Date(mutedMap[c.symbol]).getTime() > Date.now() ? `\uD83D\uDD07 ${c.symbol}` : c.symbol,
     callback_data: `mute:coin:${c.symbol}`,
   }));
-  return { text, keyboard: [...recentRow, ...chunk(buttons, 3), ...footer('nav:hub')] };
+  return { text, keyboard: [...recentRow, ...chunk(buttons, 3), ...footer('nav:safetyadmin')] };
 }
 
 function muteDurationPicker(symbol) {
@@ -392,7 +363,7 @@ function pauseMenu({ paused, pausedUntil }) {
   const text = `${status}\n\nPause for how long?`;
   return {
     text,
-    keyboard: durationPicker('pause:apply', [[{ text: '\u25B6 Resume now', callback_data: 'action:resume' }], backRow('nav:hub')]),
+    keyboard: durationPicker('pause:apply', [[{ text: '\u25B6 Resume now', callback_data: 'action:resume' }], backRow('nav:safetyadmin')]),
   };
 }
 
@@ -413,17 +384,20 @@ function automationHub() {
   return { text, keyboard };
 }
 
-function scheduleList(schedules) {
+function scheduleList(schedules, tz = 'UTC') {
+  const tzSuffix = tz === 'UTC' ? 'UTC' : tz;
   const lines = schedules.length
     ? schedules
         .map((s) => {
           const what = s.kind === 'chart' ? `chart ${s.symbol} (${s.period})` : s.kind === 'digest' ? 'digest' : `post ${s.symbol}`;
+          if (s.cadence === 'hourly') {
+            return `#${s.id} ${what} \u2192 #${s.channelName}, hourly :${String(s.atMinuteUtc).padStart(2, '0')}`;
+          }
+          const local = timezone.utcToLocal(s.atHourUtc, s.atMinuteUtc, tz, s.cadence === 'weekly' ? s.dayOfWeek : null);
           const when =
-            s.cadence === 'hourly'
-              ? `hourly :${String(s.atMinuteUtc).padStart(2, '0')}`
-              : s.cadence === 'daily'
-              ? `daily ${String(s.atHourUtc).padStart(2, '0')}:${String(s.atMinuteUtc).padStart(2, '0')} UTC`
-              : `weekly (day ${s.dayOfWeek}) ${String(s.atHourUtc).padStart(2, '0')}:${String(s.atMinuteUtc).padStart(2, '0')} UTC`;
+            s.cadence === 'daily'
+              ? `daily ${timezone.fmtHm(local.hour, local.minute)} ${tzSuffix}`
+              : `weekly (day ${local.dayOfWeek}) ${timezone.fmtHm(local.hour, local.minute)} ${tzSuffix}`;
           return `#${s.id} ${what} \u2192 #${s.channelName}, ${when}`;
         })
         .join('\n')
@@ -578,7 +552,7 @@ function tagsList(tags) {
     tags.map((t) => ({ text: `#${t.tag}`, callback_data: `tag:view:${t.tag}` })),
     2
   );
-  const keyboard = [...tagRows, [{ text: '\u2795 Tag a coin', callback_data: 'tag:addstart' }], HOME_ROW];
+  const keyboard = [...tagRows, [{ text: '\u2795 Tag a coin', callback_data: 'tag:addstart' }], ...footer('nav:coinsettings')];
   return { text, keyboard };
 }
 
@@ -632,6 +606,29 @@ function moversChannelPicker(tagArg, channels) {
   return { text, keyboard: channelPicker(`movers:postto:${tagArg}`, channels, [backRow('nav:movers')]) };
 }
 
+function safetyAdminHub() {
+  const text = '\uD83D\uDEE1 Safety & Admin';
+  const keyboard = [
+    [
+      { text: '\uD83D\uDD07 Mute', callback_data: 'nav:mutemenu' },
+      { text: '\u23F8 Pause/Resume', callback_data: 'nav:pausemenu' },
+    ],
+    [
+      { text: '\uD83E\uDDEA Test', callback_data: 'nav:test' },
+      { text: '\uD83C\uDFDA Thresholds', callback_data: 'nav:thresholds' },
+    ],
+    [
+      { text: '\uD83D\uDCCA Stats', callback_data: 'nav:stats' },
+      { text: '\uD83D\uDCDC History', callback_data: 'nav:history' },
+    ],
+    [{ text: '\u2699\uFE0F Settings (card style, quiet hours, backup, audit log...)', callback_data: 'nav:settings' }],
+    [{ text: '\uD83D\uDCE5 Held-back alerts', callback_data: 'nav:heldback' }],
+    [{ text: '\u267B Reset', callback_data: 'nav:reset' }],
+    ...footer('nav:hub'),
+  ];
+  return { text, keyboard };
+}
+
 // ---------- Markets hub ----------
 function marketsHub({ categories, uncategorizedCount }) {
   const text = '\uD83D\uDC8E PricePing Markets';
@@ -647,7 +644,7 @@ function marketsHub({ categories, uncategorizedCount }) {
     [{ text: '\u2B50 My Watchlist', callback_data: 'markets:watchlist' }],
     [
       { text: '\uD83D\uDD04 Refresh classification', callback_data: 'markets:reclassify' },
-      { text: '\u2699 Coin settings', callback_data: 'nav:coinsettings' },
+      { text: '\uD83E\uDE99 Coins', callback_data: 'nav:coinsettings' },
     ],
     ...footer('nav:hub'),
   ];
@@ -720,7 +717,10 @@ function channelList(channels, defaultsByType) {
     ...clearTypeRows,
     [{ text: '\u2795 Add channel', callback_data: 'channel:add' }],
     [{ text: '\uD83C\uDFAF Set per-type default', callback_data: 'channel:typedefault' }],
-    [{ text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' }],
+    [
+      { text: '\uD83D\uDCE2 Broadcast', callback_data: 'nav:broadcastmenu' },
+      { text: '\u270F Captions', callback_data: 'nav:captiontypes' },
+    ],
     ...footer('nav:hub'),
   ];
   return { text, keyboard };
@@ -754,7 +754,7 @@ function captionTypes() {
       ...chunk(buttons, 2),
       [{ text: '\uD83C\uDFA8 Apply a caption pack', callback_data: 'nav:captionpacks' }],
       [{ text: '\uD83D\uDCD6 Variables', callback_data: 'nav:variables' }],
-      ...footer('nav:hub'),
+      ...footer('nav:channels'),
     ],
   };
 }
@@ -809,19 +809,22 @@ function variablesHelp(docs) {
 
 // ---------- Coin settings entry grid (from hub) ----------
 function coinSettingsMenu(recentSymbols = []) {
-  const text = 'Coin settings \u2014 pick a coin (threshold, milestone, cooldown, mute in one screen):';
+  const text = '\uD83E\uDE99 Coins \u2014 pick one below (threshold, milestone, cooldown, mute in one screen), or use a tool above:';
   const keyboard = coinGrid('coin:settings', {
     recentSymbols,
     extraRows: [
       [
-        { text: '\uD83C\uDFAF All milestones', callback_data: 'nav:milestones' },
-        { text: '\uD83D\uDCCB View all coins', callback_data: 'nav:coinlist' },
+        { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
+        { text: '\uD83D\uDCCB View / remove coins', callback_data: 'nav:coinlist' },
       ],
       [
-        { text: '\u2795 Add coin', callback_data: 'addcoin:start' },
         { text: '\u2611 Select multiple', callback_data: 'coinselect:start' },
+        { text: '\uD83C\uDFF7 Tags', callback_data: 'nav:tags' },
       ],
-      [{ text: '\uD83D\uDC8E Markets', callback_data: 'nav:markets' }],
+      [
+        { text: '\uD83C\uDFAF Milestones', callback_data: 'nav:milestones' },
+        { text: '\uD83C\uDFDA Thresholds', callback_data: 'nav:thresholds' },
+      ],
     ],
   });
   return { text, keyboard };
@@ -868,7 +871,7 @@ function removeCoinConfirmBatch(removable, notTracked, notCustom) {
 // ---------- History ----------
 function historyMenu(recentSymbols = []) {
   const text = 'History \u2014 pick a coin:';
-  return { text, keyboard: coinGrid('history:coin', { recentSymbols }) };
+  return { text, keyboard: coinGrid('history:coin', { recentSymbols, parentCallback: 'nav:safetyadmin' }) };
 }
 
 function historyDetail(symbol, lines, channels, activeChannel, offset = 0, total = 0, pageSize = 10) {
@@ -958,7 +961,7 @@ function resetMenu() {
   const buttons = options.map((o) => ({ text: o.text, callback_data: `reset:confirm:${o.code}` }));
   return {
     text,
-    keyboard: [...chunk(buttons, 2), [{ text: '\u26A0 Reset EVERYTHING', callback_data: 'reset:confirm:everything' }], ...footer('nav:hub')],
+    keyboard: [...chunk(buttons, 2), [{ text: '\u26A0 Reset EVERYTHING', callback_data: 'reset:confirm:everything' }], ...footer('nav:safetyadmin')],
   };
 }
 
@@ -1013,23 +1016,69 @@ function stats({ today, allTime, perCoin }) {
     `Per coin (all-time):\n${perCoinLines}\n\n` +
     `Use /history SYMBOL [channel] for a per-coin breakdown.`;
 
-  const keyboard = [HOME_ROW];
+  const keyboard = [...footer('nav:safetyadmin')];
+  return { text, keyboard };
+}
+
+// ---------- Timezone ----------
+const TIMEZONE_PRESETS = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Africa/Lagos',
+  'Africa/Nairobi',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+];
+function timezonePicker(currentTz) {
+  const text = `Set timezone \u2014 currently ${currentTz}. Used to convert /schedule and /quiethours between your local time and UTC (how they're stored).`;
+  const buttons = TIMEZONE_PRESETS.map((tz) => ({
+    text: `${tz === currentTz ? '\u2705 ' : ''}${tz}`,
+    callback_data: `tz:set:${tz}`,
+  }));
+  const keyboard = [...chunk(buttons, 2), [{ text: '\u270F Other (type it)', callback_data: 'tz:custom' }], ...footer('nav:settings')];
+  return { text, keyboard };
+}
+
+function heldBackAlerts(rows) {
+  const text = rows.length
+    ? `Held-back alerts (last ${rows.length})\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+      rows.map((r) => `${r.symbol.padEnd(6, ' ')} ${r.alertType.padEnd(10, ' ')} ${format.timeAgo(r.createdAt)} \u2014 ${r.reason}`).join('\n') +
+      `\n\nThese aren't lost \u2014 threshold and milestone alerts both retry automatically once the hourly cap has room again. This is a record of what got delayed and why.`
+    : 'No held-back alerts \u2014 nothing has hit the hourly cap.';
+  const keyboard = [[{ text: '\uD83D\uDDD1 Clear log', callback_data: 'heldback:clear' }], ...footer('nav:safetyadmin')];
   return { text, keyboard };
 }
 
 // ---------- Settings ----------
-function settings({ compactCards = false, quietHours = null } = {}) {
+function settings({ compactCards = false, quietHours = null, tz = 'UTC' } = {}) {
+  const tzLabel = tz === 'UTC' ? 'UTC' : tz;
+  const quietHoursLine = quietHours
+    ? (() => {
+        const start = timezone.utcToLocal(quietHours.startHourUtc, 0, tz);
+        const end = timezone.utcToLocal(quietHours.endHourUtc, 0, tz);
+        return `${start.hour}:00-${end.hour}:00 ${tzLabel}`;
+      })()
+    : 'off';
   const text =
     `Settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `Timezone          ${tzLabel}\n` +
     `Poll interval     ${config.pollIntervalMs / 1000}s\n` +
     `Cooldown default  ${config.cooldownMinutes}m per coin\n` +
     `Hourly send cap   ${config.maxAlertsPerHour}\n` +
     `Memory limit      ${config.memoryLimitMb}MB\n` +
     `Card style        ${compactCards ? 'compact' : 'full'}\n` +
-    `Quiet hours       ${quietHours ? `${quietHours.startHourUtc}:00-${quietHours.endHourUtc}:00 UTC` : 'off'}\n\n` +
+    `Quiet hours       ${quietHoursLine}\n\n` +
     `Poll/cooldown/cap/memory are environment variables (next restart). ` +
-    `Everything else here \u2014 card style, quiet hours (/quiethours), channels, captions, thresholds, milestones, cooldowns, schedules, and rules \u2014 is live, see /commands.`;
+    `Everything else here \u2014 timezone, card style, quiet hours (/quiethours), channels, captions, thresholds, milestones, cooldowns, schedules, and rules \u2014 is live, see /commands.`;
   const keyboard = [
+    [{ text: '\uD83C\uDF0D Set timezone', callback_data: 'tz:start' }],
     [
       { text: '\u2B50 Quick actions', callback_data: 'nav:pins' },
       { text: '\uD83D\uDCBE Backup', callback_data: 'nav:backup' },
@@ -1040,8 +1089,7 @@ function settings({ compactCards = false, quietHours = null } = {}) {
     ],
     [{ text: compactCards ? '\uD83D\uDDBC Switch to full cards' : '\uD83D\uDDBC Switch to compact cards', callback_data: 'action:cardstyletoggle' }],
     [{ text: '\uD83D\uDC64 Who am I', callback_data: 'nav:whoami' }],
-    HUB_ROW,
-    HOME_ROW,
+    ...footer('nav:safetyadmin'),
   ];
   return { text, keyboard };
 }
@@ -1049,7 +1097,7 @@ function settings({ compactCards = false, quietHours = null } = {}) {
 // ---------- Test picker (advanced) ----------
 function testPicker(recentSymbols = []) {
   const text = 'Test alert \u2014 pick a coin:';
-  return { text, keyboard: coinGrid('test:coin', { extraRows: [[{ text: '\u26A1 Run full pipeline check', callback_data: 'test:full' }]], recentSymbols }) };
+  return { text, keyboard: coinGrid('test:coin', { extraRows: [[{ text: '\u26A1 Run full pipeline check', callback_data: 'test:full' }]], recentSymbols, parentCallback: 'nav:safetyadmin' }) };
 }
 
 function testTypePicker(symbol) {
@@ -1083,7 +1131,8 @@ function testDestinationPicker(symbol, type, valueCode, channels, lastDestinatio
 
 module.exports = {
   home,
-  hub,
+  publishHub,
+  safetyAdminHub,
   prices,
   postMenu,
   postChannelPicker,
@@ -1149,10 +1198,11 @@ module.exports = {
   addCoinConfirm,
   stats,
   settings,
+  timezonePicker,
+  heldBackAlerts,
   testPicker,
   testTypePicker,
   testValuePicker,
   testDestinationPicker,
   HOME_ROW,
-  HUB_ROW,
 };
