@@ -169,4 +169,39 @@ async function fetchKlines(pair, interval, limit) {
   }
 }
 
-module.exports = { fetchPrices, fetch24hrStats, fetchKlines, pairExists, fetchSinglePrice };
+// Full spot symbol catalog — used by services/coinSync.js to detect
+// newly-listed and delisted pairs. Deliberately called with no `symbols`
+// filter param (there's no way to ask "just USDT pairs" server-side), so
+// this returns Binance's entire spot catalog (2000+ entries) in one
+// request; weight cost (20) is fixed regardless, and auto-sync only ever
+// calls this on its own slow interval (default daily), never per-tick.
+// returns: array of { symbol, baseAsset, quoteAsset, status, isSpotTradingAllowed }
+async function fetchExchangeInfo() {
+  const url = `${BASE_URL}/api/v3/exchangeInfo`;
+  const { signal, clear } = withTimeout();
+
+  try {
+    const res = await fetch(url, { signal });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Binance responded ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    if (!data || !Array.isArray(data.symbols)) {
+      throw new Error('Unexpected Binance exchangeInfo response shape (expected { symbols: [...] })');
+    }
+    return data.symbols
+      .filter((s) => s && typeof s.symbol === 'string' && typeof s.baseAsset === 'string' && typeof s.quoteAsset === 'string')
+      .map((s) => ({
+        symbol: s.symbol,
+        baseAsset: s.baseAsset,
+        quoteAsset: s.quoteAsset,
+        status: s.status,
+        isSpotTradingAllowed: s.isSpotTradingAllowed !== false,
+      }));
+  } finally {
+    clear();
+  }
+}
+
+module.exports = { fetchPrices, fetch24hrStats, fetchKlines, pairExists, fetchSinglePrice, fetchExchangeInfo };

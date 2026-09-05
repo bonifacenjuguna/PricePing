@@ -130,6 +130,32 @@ AAVE` (space- or line-separated), one confirm covers the whole batch, and
 anything not tracked or not removable (the built-in 10) is reported and
 skipped rather than blocking the rest.
 
+### Auto-sync with Binance
+
+Instead of adding coins by hand one at a time, `/autosync on` lets the
+bot keep the list in sync with Binance's own spot market on its own —
+periodically diffing the tracked list against `GET /api/v3/exchangeInfo`
+(Binance's live catalog of every spot symbol, its status, and quote
+asset) and applying the difference: **off by default**, since this
+changes what's tracked without a human confirming each coin.
+
+- New USDT pairs that show up on Binance and aren't tracked yet get
+  added automatically (generated color, ticker as the name — rename by
+  hand later if you want).
+- Coins auto-sync *itself* added, once no longer `TRADING` on Binance,
+  get removed automatically. It never removes anything you added with
+  `/addcoin`, and never touches the original 10 — only ever undoes its
+  own additions.
+- Leveraged/rebasing tokens (`BTCUP`, `ETHDOWN`, etc.) are filtered out;
+  they're real Binance pairs but not "a coin" in any useful sense here.
+- Every run is capped (`/autosync limit ADD REMOVE`, default 5/5) so one
+  pass can't flood or empty the list — growth happens gradually.
+
+Commands: `/autosync [on|off|status|quote ASSET|limit ADD REMOVE|interval
+HOURS]` for configuration, `/syncnow` to run a pass immediately (still
+capped) instead of waiting for the next scheduled check, `/autosynclog`
+for the last 10 runs.
+
 ## Markets — dynamic categories, Top 20, gainers/losers, watchlist
 
 `/markets` (also its own hub button) is a live-updating browser on top of
@@ -172,32 +198,76 @@ toggle a coin in/out via the ⭐ button on its settings screen.
 
 ## Start here: `/commands`
 
-Every feature is reachable by button — `/commands` (or `/start` → "☰ All
-commands") opens the control panel, grouped so related things sit
-together: Post & Chart + Coin settings, Markets + Movers, Automation +
-Channels, Broadcast + Fear & Greed, Mute + Pause/Resume, Captions + Test,
-Stats + History, then Settings and Reset on their own (admin and
-destructive actions get isolated on purpose, not paired). Settings and
-Broadcast are proper top-level buttons now — they existed as full screens
-before but had no direct link into them from the hub. Related screens
-also cross-link to each other directly (Coin settings ↔ Markets,
-Automation → Markets) instead of forcing a trip back to the hub every
-time.
+`/start` and `/commands` open the exact same screen — one dashboard, not
+two different partial views of the bot (that used to be true pre-v0.9.0:
+`/start`'s Home and `/commands`' hub were separate screens with different,
+overlapping-but-not-identical button sets, and a couple of things —
+Settings, Broadcast — had no direct link into them from either one, only
+reachable by typing the command). Now there's a single top screen: a
+status summary, up to 3 pinned quick actions, and six categories:
 
-The persistent bottom keyboard is 2×3 now (was 2×2): Home, Prices,
-Markets, Thresholds, Stats, Movers. Tapping Markets swaps it to a
-Markets-focused layout (Home, Markets, Coins, Movers, Fear & Greed,
-Prices) — tap Home there to swap back. One real constraint worth knowing:
-Telegram can't attach a persistent-keyboard change to an edited message,
-only to a brand new one — so this swap only happens on an actual BBTB tap,
-never from inline-button navigation, and deep inline navigation back to
-Home won't auto-reset it (the next BBTB Home tap will).
+- **📊 Markets** — category browser, Top 20, gainers/losers, watchlist
+- **🪙 Coins** — add/remove, browse, bulk-select, tags, thresholds, milestones
+- **📤 Publish** — post a price update, post a chart, or broadcast anything
+- **⚡ Automation** — schedules, rules, digest, bulk actions
+- **📡 Channels** — channels and captions
+- **🛡 Safety & Admin** — mute, pause, test, settings, stats, history,
+  held-back alerts, reset
 
-Screens reached from the hub have a "◀ Back" that returns one level, plus
-Home — consistent everywhere as of v0.4.0. A few things genuinely need
-free text (a hex color, a chat ID, a caption template, an exact schedule
-time) — tapping "+ Add" prompts for one line in the exact format shown,
-then executes on send; typing `/cancel` at that prompt backs out cleanly.
+Related screens cross-link directly instead of forcing a trip back to the
+top every time (Coins ↔ Markets, Automation → Markets). Every screen has
+a "◀ Back" that returns to its actual logical parent under this
+structure, plus Home.
+
+The persistent bottom keyboard is 2×3 (Home, Prices, Markets, Thresholds,
+Stats, Movers). Tapping Markets swaps it to a Markets-focused layout
+(Home, Markets, Coins, Movers, Fear & Greed, Prices) — tap Home there to
+switch back. One real constraint worth knowing: Telegram can't attach a
+persistent-keyboard change to an edited message, only to a brand new one
+— so this swap only happens on an actual BBTB tap, never from inline
+navigation, and diving deep into inline screens and hitting inline-Home
+won't reset it (the next BBTB Home tap will).
+
+A few things genuinely need free text (a hex color, a chat ID, a caption
+template, an exact schedule time) — tapping "+ Add" prompts for one line
+in the exact format shown, then executes on send; typing `/cancel` at
+that prompt backs out cleanly.
+
+## Timezone
+
+Everything time-based used to be UTC-only, full stop — `/schedule` and
+`/quiethours` both required mentally converting your local time first.
+`/settimezone America/New_York` (any IANA timezone name; also a button
+picker with common presets via Settings → Set timezone) fixes that:
+`/schedule` and `/quiethours` now take and display local time, converted
+to/from UTC under the hood using Node's built-in `Intl` (no extra
+dependency, correctly DST-aware since it checks the actual current
+offset rather than a fixed number). Defaults to UTC, so nothing changes
+until you explicitly set one. One accepted tradeoff: the offset used is
+"today's" offset, so a schedule whose fire time falls in a DST-transition
+gap can be off by an hour on the one or two days a year that happens —
+not worth a full recurring-rule timezone engine for a personal ops bot.
+
+## Held-back alerts
+
+The hourly send cap (`MAX_ALERTS_PER_HOUR`, default 20 — a safety valve
+against a flash-crash spamming the channel) used to just fire a warning
+message with nothing to show for what got held back, and worse, a
+capped-out **milestone** alert had its "already alerted" state recorded
+before the cap was even checked — so it could never be detected again
+next tick, silently and permanently lost despite the code's own comment
+claiming otherwise. (Threshold alerts never had this bug — their
+baseline only ever advanced on an actual successful send.) Fixed: a
+milestone's state now only advances after it actually sends, so both
+alert types genuinely retry once the cap has room again. Every held-back
+alert is also now logged to `/heldback` (also Safety & Admin → Held-back
+alerts) instead of vanishing into a warning message — not a manual
+resend queue, since retry-next-tick already handles that automatically,
+just a visible record of what got delayed and why. The cap-reached
+notification itself is also DB-backed now instead of an in-memory flag,
+since this bot gets redeployed often (a zip upload, not a long-running
+unchanged process) and an in-memory flag was resetting on every restart,
+refiring the warning mid-episode.
 
 ## What's new in v0.4.0
 
@@ -364,8 +434,10 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Prices & posting | `/prices` `/post SYMBOL [channel]` `/chart SYMBOL [period]` `/postchart SYMBOL [period] [channel]` |
 | Thresholds & milestones | `/thresholds` `/setthreshold SYMBOL AMOUNT [pct]` `/milestones` `/setmilestone SYMBOL STEP\|off` |
 | Cooldown | `/setcooldown SYMBOL MINUTES` `/resetcooldown SYMBOL` |
-| Pause / mute | `/pause [duration]` `/resume` `/mute SYMBOL [duration]` `/unmute SYMBOL` |
-| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required, or paste several lines to bulk-add) `/removecoin SYMBOL [SYMBOL ...]` `/coins` `/history SYMBOL [channel]` |
+| Pause / mute | `/pause [duration]` `/resume` `/mute SYMBOL [duration]` `/unmute SYMBOL` `/quiethours START END [off]` (local time) |
+| Timezone | `/settimezone [IANA_TZ]` \u2014 also Settings \u2192 Set timezone (preset picker) |
+| Held-back alerts | `/heldback` \u2014 log of alerts delayed by the hourly send cap, also Safety & Admin \u2192 Held-back alerts |
+| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required, or paste several lines to bulk-add) `/removecoin SYMBOL [SYMBOL ...]` `/coins` `/history SYMBOL [channel]` `/autosync [on\|off\|status\|quote\|limit\|interval]` `/syncnow` `/autosynclog` |
 | Markets | `/markets` \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20 by market cap, gainers/losers, watchlist \u2014 also its own hub button |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |
