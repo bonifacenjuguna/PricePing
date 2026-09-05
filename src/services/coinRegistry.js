@@ -83,10 +83,7 @@ async function fetchLogo(coin) {
 // symbol/name/binancePair/color required; isStable optional (default false).
 // defaultThreshold/thresholdType optional — falls back to a conservative
 // 1%-move default so a freshly-added coin doesn't sit alert-silent forever.
-// source: 'manual' (default, /addcoin) or 'autosync' (services/coinSync.js)
-// — persisted so a later auto-sync run knows which coins it's allowed to
-// remove again on delisting (never a manually-added one).
-async function addCoin({ symbol, name, binancePair, color, isStable, defaultThreshold, thresholdType, source }) {
+async function addCoin({ symbol, name, binancePair, color, isStable, defaultThreshold, thresholdType }) {
   const sym = symbol.toUpperCase();
   if (config.coins.find((c) => c.symbol === sym)) {
     throw new Error(`${sym} is already tracked`);
@@ -99,7 +96,6 @@ async function addCoin({ symbol, name, binancePair, color, isStable, defaultThre
     color,
     isStable: !!isStable,
     milestoneStep: null,
-    source: source === 'autosync' ? 'autosync' : 'manual',
   };
 
   await customCoinsDb.add(coin);
@@ -154,18 +150,4 @@ async function removeCoin(symbolRaw) {
   logger.info(`Removed custom coin ${symbol} (via /removecoin)`);
 }
 
-// Factory reset support: removes every coin that isn't one of the
-// original 10, reusing removeCoin()'s cleanup (DB row, tags, logo file)
-// for each. Safe to call even with zero custom coins. Deliberately
-// iterates a snapshot of symbols first — splicing config.coins while
-// iterating config.coins itself would skip entries.
-async function removeAllCustomCoins() {
-  const customSymbols = config.coins.filter((c) => !BUILT_IN_SYMBOLS.has(c.symbol)).map((c) => c.symbol);
-  for (const symbol of customSymbols) {
-    // eslint-disable-next-line no-await-in-loop
-    await removeCoin(symbol);
-  }
-  return customSymbols;
-}
-
-module.exports = { loadCustomCoins, addCoin, removeCoin, removeAllCustomCoins, BUILT_IN_SYMBOLS };
+module.exports = { loadCustomCoins, addCoin, removeCoin };

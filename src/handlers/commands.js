@@ -17,7 +17,6 @@ const schedulesDb = require('../db/schedules');
 const rulesDb = require('../db/rules');
 const coinTagsDb = require('../db/coinTags');
 const coinMetaDb = require('../db/coinMeta');
-const heldBackAlertsDb = require('../db/heldBackAlerts');
 const categorize = require('../services/categorize');
 const milestonesDb = require('../db/milestones');
 const cooldownsDb = require('../db/cooldowns');
@@ -30,7 +29,6 @@ const telegramSender = require('../services/telegramSender');
 const chartRenderer = require('../services/chartRenderer');
 const cardRenderer = require('../services/cardRenderer');
 const coinRegistry = require('../services/coinRegistry');
-const factoryResetDb = require('../db/factoryReset');
 const templateEngine = require('../services/templateEngine');
 const actions = require('../services/actions');
 const pendingInput = require('../services/pendingInput');
@@ -39,7 +37,6 @@ const recentCoins = require('../services/recentCoins');
 const undoStack = require('../services/undoStack');
 
 const format = require('../utils/format');
-const timezone = require('../utils/timezone');
 const { parseDuration, formatRemaining } = require('../utils/duration');
 const logger = require('../utils/logger');
 
@@ -79,9 +76,7 @@ async function help(ctx) {
       `/setcooldown SYMBOL MINUTES \u00B7 /resetcooldown SYMBOL\n` +
       `/pause [DURATION] / /resume\n` +
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
-      `/settimezone [IANA_TZ] \u2014 used by /schedule and /quiethours (both take local time now, not UTC) \u00B7 /heldback \u2014 alerts held back by the hourly cap\n` +
       `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL(s) \u00B7 /coins \u2014 both accept several at once (bulk-add pastes multiple lines, removecoin takes SYMBOL SYMBOL ...)\n` +
-      `/autosync [on|off|status|quote|limit|interval] \u2014 auto-track new Binance listings, auto-drop delisted ones \u00B7 /syncnow \u2014 run it now \u00B7 /autosynclog\n` +
       `/markets \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20, gainers/losers, watchlist\n` +
       `Coin settings \u2192 Select multiple \u2014 tap coins to check/uncheck, then remove/mute/set-threshold on all of them at once\n` +
       `/history SYMBOL [channel]\n` +
@@ -90,7 +85,7 @@ async function help(ctx) {
       `/setcaption TYPE[:SYMBOL] <template> \u00B7 /previewcaption TYPE[:SYMBOL] \u00B7 /resetcaption TYPE[:SYMBOL]\n` +
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
       `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules \u2014 or build a rule with buttons via /commands \u2192 Automation \u2192 Rules \u2192 Add rule\n` +
-      `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk actions (threshold/mute/unmute/delete/label) via Automation \u2192 Bulk actions\n` +
+      `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk threshold/mute via /commands \u2192 Automation \u2192 Bulk actions\n` +
       `/broadcast CHANNEL message... \u2014 plain text with HTML formatting/links, or /broadcast CHANNEL alone then send any media (photo/video/document/etc.) to post it as-is, no "Forwarded from" tag\n` +
       `/exportconfig \u00B7 /importconfig\n` +
       `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
@@ -126,34 +121,7 @@ async function home(ctx) {
 }
 
 async function hubCmd(ctx) {
-  // Was a separate, smaller screen than Home (missing Settings, Broadcast,
-  // Markets, Movers as of pre-v0.9.0) — now the same dashboard, just
-  // reached via /commands instead of /start. One consistent top-level
-  // screen everywhere, instead of two different partial views of the
-  // same bot.
-  await home(ctx);
-}
-async function publishHubScreen(ctx) {
-  await ctx.answerCbQuery();
-  await inlineEdit(ctx, menu.publishHub());
-}
-async function safetyAdminHubScreen(ctx) {
-  await ctx.answerCbQuery();
-  await inlineEdit(ctx, menu.safetyAdminHub());
-}
-async function heldBackAlertsCmd(ctx) {
-  const rows = await heldBackAlertsDb.recent(20);
-  await inlineReply(ctx, menu.heldBackAlerts(rows));
-}
-async function heldBackAlertsScreen(ctx) {
-  await ctx.answerCbQuery();
-  const rows = await heldBackAlertsDb.recent(20);
-  await inlineEdit(ctx, menu.heldBackAlerts(rows));
-}
-async function heldBackAlertsClear(ctx) {
-  await heldBackAlertsDb.clear();
-  await ctx.answerCbQuery('Cleared');
-  await inlineEdit(ctx, menu.heldBackAlerts([]));
+  await inlineReply(ctx, menu.hub());
 }
 
 async function pricesCmd(ctx) {
@@ -178,50 +146,9 @@ async function statsCmd(ctx) {
 }
 
 async function settingsCmd(ctx) {
-  const [compactCards, quietHours, tz] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours(), settingsDb.getTimezone()]);
-  await inlineReply(ctx, menu.settings({ compactCards, quietHours, tz }));
+  const [compactCards, quietHours] = await Promise.all([settingsDb.getCompactCards(), settingsDb.getQuietHours()]);
+  await inlineReply(ctx, menu.settings({ compactCards, quietHours }));
 }
-async function timezoneStart(ctx) {
-  await ctx.answerCbQuery();
-  const tz = await settingsDb.getTimezone();
-  await inlineEdit(ctx, menu.timezonePicker(tz));
-}
-async function timezonePick(ctx, tz) {
-  if (!timezone.isValidTimezone(tz)) {
-    await ctx.answerCbQuery('Invalid timezone');
-    return;
-  }
-  await settingsDb.setTimezone(tz);
-  eventsDb.recordAudit(`timezone set to ${tz}`).catch(() => {});
-  await ctx.answerCbQuery(`Timezone set to ${tz}`);
-  await settingsCmd(ctx);
-}
-async function timezoneCustomStart(ctx) {
-  await ctx.answerCbQuery();
-  const prompt = 'Send an IANA timezone name, e.g. "America/Sao_Paulo" or "Asia/Karachi" (see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones for the full list).';
-  pendingInput.set('settimezone', {}, prompt);
-  await ctx.reply(prompt);
-}
-async function runSetTimezone(ctx, text) {
-  const tz = text.trim();
-  if (!timezone.isValidTimezone(tz)) {
-    await ctx.reply(`"${tz}" isn't a recognized timezone name. Check the spelling against the IANA list (e.g. "America/Sao_Paulo", "Asia/Karachi") and try again.`);
-    return;
-  }
-  await settingsDb.setTimezone(tz);
-  eventsDb.recordAudit(`timezone set to ${tz}`).catch(() => {});
-  await ctx.reply(`Timezone set to ${tz}. /schedule and /quiethours now read/display in this timezone.`);
-}
-async function setTimezoneCmd(ctx) {
-  const tz = ctx.message.text.replace(/^\/settimezone(@\w+)?\s*/, '').trim();
-  if (!tz) {
-    const current = await settingsDb.getTimezone();
-    await ctx.reply(`Current timezone: ${current}\nUsage: /settimezone America/New_York (IANA name), or use Settings \u2192 Set timezone for a picker.`);
-    return;
-  }
-  await runSetTimezone(ctx, tz);
-}
-
 async function usageCmd(ctx) {
   const commandUsageDb = require('../db/commandUsage');
   const rows = await commandUsageDb.getAll();
@@ -621,29 +548,20 @@ async function quietHoursCmd(ctx) {
     await ctx.reply('Quiet hours turned off.');
     return;
   }
-  const startLocal = Number(parts[1]);
-  const endLocal = Number(parts[2]);
-  const tz = await settingsDb.getTimezone();
-  if (!Number.isInteger(startLocal) || !Number.isInteger(endLocal) || startLocal < 0 || startLocal > 23 || endLocal < 0 || endLocal > 23) {
+  const start = Number(parts[1]);
+  const end = Number(parts[2]);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > 23 || end < 0 || end > 23) {
     const current = await settingsDb.getQuietHours();
-    let currentLine = 'off';
-    if (current) {
-      const local = timezone.utcToLocal(current.startHourUtc, 0, tz);
-      const localEnd = timezone.utcToLocal(current.endHourUtc, 0, tz);
-      currentLine = `${local.hour}:00-${localEnd.hour}:00${tz === 'UTC' ? ' UTC' : ` ${tz}`}`;
-    }
     await ctx.reply(
-      `Usage: /quiethours START END (your local time${tz === 'UTC' ? '' : `, ${tz}`}, hours 0-23) \u2014 e.g. /quiethours 0 7 for midnight-7am\nOr: /quiethours off\n\n` +
-        `Currently: ${currentLine}`
+      `Usage: /quiethours START END (UTC hours, 0-23) \u2014 e.g. /quiethours 0 7 for midnight-7am\nOr: /quiethours off\n\n` +
+        `Currently: ${current ? `${current.startHourUtc}:00-${current.endHourUtc}:00 UTC` : 'off'}`
     );
     return;
   }
-  const startUtc = timezone.localToUtc(startLocal, 0, tz).hour;
-  const endUtc = timezone.localToUtc(endLocal, 0, tz).hour;
-  await settingsDb.setQuietHours(startUtc, endUtc);
-  eventsDb.recordAudit(`quiet hours: ${startLocal}:00-${endLocal}:00 local (${tz})`).catch(() => {});
+  await settingsDb.setQuietHours(start, end);
+  eventsDb.recordAudit(`quiet hours: ${start}:00-${end}:00 UTC`).catch(() => {});
   await ctx.reply(
-    `Quiet hours set to ${startLocal}:00-${endLocal}:00${tz === 'UTC' ? ' UTC' : ` ${tz}`} \u2014 threshold and milestone alerts will be held during that window (post/chart schedules too; digests are exempt) and catch up once it ends.`
+    `Quiet hours set to ${start}:00-${end}:00 UTC \u2014 threshold and milestone alerts will be held during that window (post/chart schedules too; digests are exempt) and catch up once it ends.`
   );
 }
 
@@ -692,8 +610,7 @@ async function mute(ctx) {
     await ctx.reply(`Usage: /mute SYMBOL [DURATION]\nKnown symbols: ${config.coins.map((c) => c.symbol).join(', ')}`);
     return;
   }
-  const defaultMuteMinutes = await settingsDb.getRuntimeLimit('defaultMuteDurationMinutes', config.defaultMuteMs / 60000);
-  const durationMs = parseDuration(parts[2]) || defaultMuteMinutes * 60000;
+  const durationMs = parseDuration(parts[2]) || config.defaultMuteMs;
   await coinStateDb.setMuteUntil(symbol, new Date(Date.now() + durationMs));
   eventsDb.recordAudit(`${symbol} muted for ${formatRemaining(durationMs)}`).catch(() => {});
   await ctx.reply(`${symbol} muted for ${formatRemaining(durationMs)}. /unmute ${symbol} to lift it early.`);
@@ -1065,202 +982,6 @@ async function coinListScreen(ctx) {
   const customSymbols = new Set(custom.map((c) => c.symbol));
   await inlineEdit(ctx, menu.coinList(config.coins, customSymbols));
 }
-// ---------------------------------------------------------------------------
-// Binance auto-sync — /autosync (config) and /syncnow (run it), see
-// services/coinSync.js. Off by default: this changes the tracked coin
-// list on its own, so it's opt-in and capped per run (see settings
-// defaults) rather than something that can silently balloon the list.
-// ---------------------------------------------------------------------------
-const coinSync = require('../services/coinSync');
-const autoSyncLogDb = require('../db/autoSyncLog');
-
-function autoSyncStatusText(cfg) {
-  const last = cfg.lastRunAt ? new Date(cfg.lastRunAt).toLocaleString('en-US', { timeZone: 'UTC' }) + ' UTC' : 'never';
-  return (
-    `\uD83D\uDD04 *Binance auto-sync*: ${cfg.enabled ? 'ON' : 'OFF'}\n` +
-    `Quote asset: ${cfg.quoteAsset}\n` +
-    `Max new coins/run: ${cfg.maxNewPerRun} \u00B7 Max removed/run: ${cfg.maxRemovePerRun}\n` +
-    `Check interval: every ${cfg.intervalHours}h\n` +
-    `Last run: ${last}\n\n` +
-    `New coins are added with a generated color and their Binance ticker as the name \u2014 ` +
-    `rename by /removecoin then /addcoin if you want something nicer. Only coins auto-sync ` +
-    `itself added are ever auto-removed; anything you added with /addcoin (or the original 10) is never touched.\n\n` +
-    `/autosync on \u00B7 /autosync off \u00B7 /autosync limit ADD REMOVE \u00B7 /autosync interval HOURS \u00B7 /autosync quote USDT|USDC\n` +
-    `/syncnow \u2014 run it right now \u00B7 /autosynclog \u2014 recent runs`
-  );
-}
-
-async function autoSyncCmd(ctx) {
-  const args = ctx.message.text.replace(/^\/autosync(@\w+)?\s*/, '').trim().split(/\s+/).filter(Boolean);
-  const sub = (args[0] || '').toLowerCase();
-
-  if (!sub || sub === 'status') {
-    const cfg = await settingsDb.getAutoSyncConfig();
-    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
-    return;
-  }
-
-  if (sub === 'on' || sub === 'off') {
-    const cfg = await settingsDb.setAutoSyncConfig({ enabled: sub === 'on' });
-    eventsDb.recordAudit(`auto-sync: turned ${sub}`).catch(() => {});
-    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
-    return;
-  }
-
-  if (sub === 'quote') {
-    const quote = (args[1] || '').toUpperCase();
-    if (!quote) {
-      await ctx.reply('Usage: /autosync quote USDT (or USDC, etc.)');
-      return;
-    }
-    const cfg = await settingsDb.setAutoSyncConfig({ quoteAsset: quote });
-    eventsDb.recordAudit(`auto-sync: quote asset set to ${quote}`).catch(() => {});
-    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
-    return;
-  }
-
-  if (sub === 'limit') {
-    const add = Number(args[1]);
-    const remove = Number(args[2] ?? args[1]);
-    if (!Number.isFinite(add) || add < 0 || !Number.isFinite(remove) || remove < 0) {
-      await ctx.reply('Usage: /autosync limit ADD_PER_RUN [REMOVE_PER_RUN] \u2014 e.g. /autosync limit 5 5');
-      return;
-    }
-    const cfg = await settingsDb.setAutoSyncConfig({ maxNewPerRun: add, maxRemovePerRun: remove });
-    eventsDb.recordAudit(`auto-sync: limits set to +${add}/-${remove} per run`).catch(() => {});
-    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
-    return;
-  }
-
-  if (sub === 'interval') {
-    const hours = Number(args[1]);
-    if (!Number.isFinite(hours) || hours < 1) {
-      await ctx.reply('Usage: /autosync interval HOURS \u2014 e.g. /autosync interval 24');
-      return;
-    }
-    const cfg = await settingsDb.setAutoSyncConfig({ intervalHours: hours });
-    eventsDb.recordAudit(`auto-sync: interval set to ${hours}h`).catch(() => {});
-    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
-    return;
-  }
-
-  await ctx.reply(
-    'Usage: /autosync [on|off|status|quote ASSET|limit ADD REMOVE|interval HOURS]'
-  );
-}
-
-// Runs a sync pass immediately regardless of the on/off toggle — lets the
-// admin see (and get) results right away instead of waiting for the next
-// periodic check. Still respects the configured per-run caps, so this
-// won't dump hundreds of coins in one go even on a first run against a
-// long-untouched list.
-async function syncNowCmd(ctx) {
-  await ctx.reply('Checking Binance\u2019s current spot list against what\u2019s tracked...');
-  // manual: true — results go straight back to this chat below, so
-  // runSync never needs the bot object to DM the admin separately.
-  const result = await coinSync.runSync(null, { manual: true });
-
-  if (!result.ok) {
-    await ctx.reply(`Sync failed: ${result.error}`);
-    return;
-  }
-
-  const lines = [];
-  if (result.added.length) lines.push(`\u2795 Added: ${result.added.join(', ')}`);
-  if (result.removed.length) lines.push(`\u2796 Removed (no longer trading on Binance): ${result.removed.join(', ')}`);
-  if (result.failures.length) lines.push(`\u26A0\uFE0F Failed: ${result.failures.join('; ')}`);
-  if (!lines.length) lines.push('No changes \u2014 tracked list already matches Binance.');
-  if (result.remainingAddCandidates > 0) {
-    lines.push(
-      `${result.remainingAddCandidates} more new-on-Binance coin(s) available but past this run's cap \u2014 raise it with /autosync limit, or run /syncnow again.`
-    );
-  }
-
-  await ctx.reply(lines.join('\n'));
-}
-
-async function autoSyncLogCmd(ctx) {
-  const rows = await autoSyncLogDb.recent(10);
-  if (!rows.length) {
-    await ctx.reply('No auto-sync runs yet. /syncnow to run one now.');
-    return;
-  }
-  const lines = rows.map((r) => {
-    const when = new Date(r.run_at).toLocaleString('en-US', { timeZone: 'UTC' }) + ' UTC';
-    if (r.error) return `${when} \u2014 error: ${r.error}`;
-    const parts = [];
-    if (r.added) parts.push(`+${r.added}`);
-    if (r.removed) parts.push(`-${r.removed}`);
-    return `${when} \u2014 ${parts.length ? parts.join(' ') : 'no changes'}`;
-  });
-  await ctx.reply(`Recent auto-sync runs:\n${lines.join('\n')}`);
-}
-
-// ---------------------------------------------------------------------------
-// Bot Mode + Advanced limits — see db/settings.js for the mode multipliers
-// and bounds. Both screens are reached from Settings, and /mode / /limits
-// work as direct shortcuts too.
-// ---------------------------------------------------------------------------
-async function botModeScreen(ctx) {
-  const current = await settingsDb.getBotMode();
-  const screen = menu.botModePicker(current, settingsDb.BOT_MODES);
-  await inlineEdit(ctx, screen);
-}
-async function modeCmd(ctx) {
-  await botModeScreen(ctx);
-}
-async function botModeSet(ctx, key) {
-  await ctx.answerCbQuery();
-  const def = await settingsDb.setBotMode(key);
-  eventsDb.recordAudit(`bot mode: ${def.label}`).catch(() => {});
-  await botModeScreen(ctx);
-}
-
-async function limitsScreenRender(ctx) {
-  const fallbacks = {
-    pollIntervalMs: config.pollIntervalMs,
-    cooldownMinutes: config.cooldownMinutes,
-    maxAlertsPerHour: config.maxAlertsPerHour,
-    defaultMuteDurationMinutes: config.defaultMuteMs / 60000,
-    sendDelayMs: config.sendDelayMs,
-    binanceFailureAlertThreshold: config.binanceFailureAlertThreshold,
-    heartbeatCheckIntervalMs: config.heartbeatCheckIntervalMs,
-    heartbeatStaleMultiplier: config.heartbeatStaleMultiplier,
-    memoryLimitMb: config.memoryLimitMb,
-  };
-  const values = {};
-  for (const key of Object.keys(settingsDb.RUNTIME_LIMIT_BOUNDS)) {
-    // eslint-disable-next-line no-await-in-loop
-    values[key] = await settingsDb.getRuntimeLimit(key, fallbacks[key]);
-  }
-  const screen = menu.limitsScreen(values, settingsDb.RUNTIME_LIMIT_BOUNDS);
-  await inlineEdit(ctx, screen);
-}
-async function limitsCmd(ctx) {
-  await limitsScreenRender(ctx);
-}
-async function limitChangeStart(ctx, key) {
-  await ctx.answerCbQuery();
-  const bounds = settingsDb.RUNTIME_LIMIT_BOUNDS[key];
-  if (!bounds) return;
-  const prompt = await ctx.reply(
-    `Type a new value for "${key}" (${bounds.min}-${bounds.max}). Out-of-range values are automatically capped to the nearest limit. /cancel to stop.`
-  );
-  pendingInput.set('setlimit', { key }, prompt);
-}
-async function runSetLimit(ctx, key, text) {
-  const value = Number(text.trim());
-  if (!Number.isFinite(value)) {
-    await ctx.reply('That\u2019s not a number \u2014 try again, or /cancel.');
-    return;
-  }
-  const applied = await settingsDb.setRuntimeLimit(key, value);
-  eventsDb.recordAudit(`limit ${key} set to ${applied}`).catch(() => {});
-  const note = applied !== value ? ` (capped from ${value} to stay in the safe range)` : '';
-  await ctx.reply(`${key} is now ${applied}${note}.`);
-  await limitsScreenRender(ctx);
-}
-
 async function removeCoinCmd(ctx) {
   const raw = ctx.message.text.replace(/^\/removecoin(@\w+)?\s*/, '');
   const symbols = raw
@@ -1907,18 +1628,14 @@ async function automationHubScreen(ctx) {
   await inlineEdit(ctx, menu.automationHub());
 }
 async function schedulesScreen(ctx) {
-  const [all, tz] = await Promise.all([schedulesDb.getAll(), settingsDb.getTimezone()]);
-  await inlineEdit(ctx, menu.scheduleList(all, tz));
+  await inlineEdit(ctx, menu.scheduleList(await schedulesDb.getAll()));
 }
 async function schedulesListCmd(ctx) {
-  const [all, tz] = await Promise.all([schedulesDb.getAll(), settingsDb.getTimezone()]);
-  await inlineReply(ctx, menu.scheduleList(all, tz));
+  await inlineReply(ctx, menu.scheduleList(await schedulesDb.getAll()));
 }
 async function scheduleAddStart(ctx) {
-  const tz = await settingsDb.getTimezone();
   const prompt =
-    `Send: <post|chart|digest> [SYMBOL] [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n` +
-    `(HH:MM is your local time \u2014 currently set to ${tz}. /settimezone to change it.)\n\n` +
+    'Send: <post|chart|digest> [SYMBOL] [period] CHANNEL <hourly|daily|weekly> HH:MM [dayOfWeek 0-6]\n\n' +
     'Examples:\n' +
     'post BTC main daily 09:00\n' +
     'chart ETH 24h vip daily 18:30\n' +
@@ -1969,39 +1686,18 @@ async function runAddSchedule(ctx, parts, editId = null) {
   const timeStr = parts[idx++] || '';
   const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
   if (!timeMatch) {
-    const tz = await settingsDb.getTimezone();
-    await ctx.reply(`Time must be HH:MM (your local time${tz === 'UTC' ? '' : `, ${tz}`}), e.g. 09:00`);
+    await ctx.reply('Time must be HH:MM (UTC), e.g. 09:00');
     return;
   }
-  const hourLocal = Number(timeMatch[1]);
-  const minuteLocal = Number(timeMatch[2]);
-  if (hourLocal > 23 || minuteLocal > 59) {
-    await ctx.reply('Hour must be 0-23 and minute 0-59.');
-    return;
-  }
-  let dayOfWeekLocal = null;
+  const atHourUtc = Number(timeMatch[1]);
+  const atMinuteUtc = Number(timeMatch[2]);
+  let dayOfWeek = null;
   if (cadence === 'weekly') {
-    dayOfWeekLocal = Number(parts[idx++]);
-    if (!Number.isInteger(dayOfWeekLocal) || dayOfWeekLocal < 0 || dayOfWeekLocal > 6) {
+    dayOfWeek = Number(parts[idx++]);
+    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
       await ctx.reply('Weekly schedules need a day of week 0-6 (0=Sunday) as the last value.');
       return;
     }
-  }
-
-  // Hourly schedules only use the minute-past-the-hour (see scheduleList's
-  // "hourly :MM" display) — that's relative, not an absolute time of day,
-  // so timezone conversion doesn't apply to it. Daily/weekly need the
-  // actual local->UTC conversion since they fire at a specific wall-clock
-  // moment.
-  let atHourUtc = hourLocal;
-  let atMinuteUtc = minuteLocal;
-  let dayOfWeek = dayOfWeekLocal;
-  if (cadence !== 'hourly') {
-    const tz = await settingsDb.getTimezone();
-    const converted = timezone.localToUtc(hourLocal, minuteLocal, tz, dayOfWeekLocal);
-    atHourUtc = converted.hour;
-    atMinuteUtc = converted.minute;
-    dayOfWeek = converted.dayOfWeek;
   }
 
   const fields = { kind, symbol, period, channelName: channel.name, cadence, atMinuteUtc, atHourUtc, dayOfWeek };
@@ -2539,17 +2235,12 @@ async function resetMenuScreen(ctx) {
   await inlineEdit(ctx, menu.resetMenu());
 }
 async function resetConfirmScreen(ctx, type) {
-  if (type === 'factory') {
-    const prompt = await ctx.reply(menu.factoryResetConfirm().text);
-    pendingInput.set('factoryreset', {}, prompt);
-    return;
-  }
   await inlineEdit(ctx, menu.resetConfirm(type));
 }
 
 const RESET_HANDLERS = {
   thresholds: async () => {
-    for (const [symbol, value] of Object.entries(config.defaultThresholds)) await thresholdsDb.set(symbol, value, 'usd', false);
+    for (const [symbol, value] of Object.entries(config.defaultThresholds)) await thresholdsDb.set(symbol, value, 'usd');
   },
   milestones: async () => milestonesDb.clearAll(),
   cooldowns: async () => cooldownsDb.clearAll(),
@@ -2588,44 +2279,6 @@ async function resetExecute(ctx, type) {
   }
   eventsDb.recordAudit(`reset: ${type}`).catch(() => {});
   await ctx.reply(`Reset complete: ${type}.`);
-}
-
-// Full factory reset — gated behind typing "RESET" rather than a button
-// tap, since this is irreversible and touches everything (see
-// menu.factoryResetConfirm for exactly what it deletes). Order matters:
-// remove custom coins first (while their DB rows/logo files still exist,
-// so coinRegistry's normal cleanup runs cleanly), THEN wipe every table
-// (clears whatever's left, plus all logs/settings/channels), THEN reseed
-// exactly what a brand-new install would have.
-async function runFactoryReset(ctx, text) {
-  if (text.trim().toUpperCase() !== 'RESET') {
-    await ctx.reply('Factory reset cancelled \u2014 you didn\u2019t type RESET exactly.');
-    return;
-  }
-  await ctx.reply('Wiping everything and rebuilding from scratch \u2014 this takes a moment...');
-
-  try {
-    await coinRegistry.removeAllCustomCoins();
-    await factoryResetDb.wipeAllTables();
-
-    // Reseed exactly what migrate.js seeds on a first-ever install.
-    for (const [symbol, thresholdUsd] of Object.entries(config.defaultThresholds)) {
-      // eslint-disable-next-line no-await-in-loop
-      await thresholdsDb.ensureDefault(symbol, thresholdUsd, 'usd');
-    }
-    await settingsDb.set('paused', 'false');
-    await settingsDb.set('announcement_sent', 'false');
-    await channelsDb.add('main', config.channelId);
-    await channelsDb.setDefault('main');
-
-    eventsDb.recordAudit('FULL FACTORY RESET \u2014 entire database wiped').catch(() => {});
-    await ctx.reply(
-      'Done. The bot is back to brand new: only the original 10 coins, default thresholds, one channel, Steady Hand mode, nothing else. Run /start to see it fresh.'
-    );
-  } catch (err) {
-    logger.error('Factory reset failed', { message: err.message, stack: err.stack });
-    await ctx.reply(`Something went wrong during the factory reset: ${err.message}. Check the logs \u2014 the bot may be in a partially-reset state.`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3050,97 +2703,13 @@ async function bulkPickScope(ctx, scopeArg) {
   const s = wizardState.update('bulk', { scope });
   if (!s) return bulkWizardExpired(ctx);
   await ctx.answerCbQuery();
-
   if (s.actionType === 'mute') {
     await inlineEdit(ctx, menu.bulkWizardMuteDuration(s));
     return;
   }
-  if (s.actionType === 'unmute') {
-    await bulkExecuteUnmute(ctx, s);
-    return;
-  }
-  if (s.actionType === 'delete') {
-    const targets = await resolveBulkTargets(s.scope);
-    const deletable = targets.filter((sym) => !coinRegistry.BUILT_IN_SYMBOLS.has(sym));
-    const builtInCount = targets.length - deletable.length;
-    wizardState.update('bulk', { pendingTargets: deletable });
-    await inlineEdit(ctx, menu.bulkWizardDeleteConfirm(s, deletable, builtInCount));
-    return;
-  }
-  if (s.actionType === 'addlabel' || s.actionType === 'removelabel') {
-    const verb = s.actionType === 'addlabel' ? 'add to' : 'remove from';
-    const prompt = `Send the label to ${verb} ${scopeLabel(s.scope)} (one word, e.g. defi).`;
-    pendingInput.set('bulkwiz_label', {}, prompt);
-    await ctx.reply(`${menu.bulkWizardSummary(s)}\n\n${prompt}`);
-    return;
-  }
-
   const prompt = `Send the threshold value to apply to ${scopeLabel(s.scope)} (e.g. 400 or 2%).`;
   pendingInput.set('bulkwiz_threshold', {}, prompt);
   await ctx.reply(`${menu.bulkWizardSummary(s)}\n\n${prompt}`);
-}
-async function bulkExecuteUnmute(ctx, s) {
-  const targets = await resolveBulkTargets(s.scope);
-  for (const symbol of targets) {
-    // eslint-disable-next-line no-await-in-loop
-    await coinStateDb.clearMute(symbol);
-  }
-  wizardState.clear();
-  await ctx.reply(
-    targets.length
-      ? `Unmuted ${targets.length} coin(s): ${targets.join(', ')}.`
-      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
-  );
-}
-async function bulkDeleteExecute(ctx) {
-  const s = wizardState.get('bulk');
-  if (!s) return bulkWizardExpired(ctx);
-  await ctx.answerCbQuery('Deleting...');
-  const targets = s.pendingTargets || [];
-  const removed = [];
-  const failed = [];
-  for (const symbol of targets) {
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      await coinRegistry.removeCoin(symbol);
-      removed.push(symbol);
-    } catch (err) {
-      failed.push(`${symbol}: ${err.message}`);
-    }
-  }
-  wizardState.clear();
-  eventsDb.recordAudit(`bulk delete: ${removed.join(', ') || 'none'}`).catch(() => {});
-  const lines = [];
-  lines.push(removed.length ? `Deleted ${removed.length} coin(s): ${removed.join(', ')}.` : 'No coins were deleted.');
-  if (failed.length) lines.push(`Failed: ${failed.join('; ')}`);
-  await ctx.reply(lines.join('\n'));
-}
-async function bulkResumeAfterLabelText(ctx, text) {
-  const s = wizardState.get('bulk');
-  if (!s) {
-    await ctx.reply('That flow expired \u2014 open Automation \u2192 Bulk actions to start again.');
-    return;
-  }
-  const label = text.trim().toLowerCase().replace(/^#/, '');
-  if (!label) {
-    await ctx.reply('That doesn\u2019t look like a label \u2014 try again, or /cancel.');
-    return;
-  }
-  const targets = await resolveBulkTargets(s.scope);
-  for (const symbol of targets) {
-    // eslint-disable-next-line no-await-in-loop
-    if (s.actionType === 'addlabel') await coinTagsDb.add(symbol, label);
-    // eslint-disable-next-line no-await-in-loop
-    else await coinTagsDb.remove(symbol, label);
-  }
-  wizardState.clear();
-  const verb = s.actionType === 'addlabel' ? 'Added' : 'Removed';
-  const prep = s.actionType === 'addlabel' ? 'to' : 'from';
-  await ctx.reply(
-    targets.length
-      ? `${verb} label #${label} ${prep} ${targets.length} coin(s): ${targets.join(', ')}.`
-      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
-  );
 }
 async function bulkWizardExpired(ctx) {
   await ctx.answerCbQuery('That flow expired \u2014 start again with Bulk actions.');
@@ -3540,17 +3109,13 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
   if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
   if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
-  if (pending.action === 'bulkwiz_label') return bulkResumeAfterLabelText(ctx, text);
   if (pending.action === 'coinselect_threshold') return coinSelectResumeAfterThresholdText(ctx, text);
-  if (pending.action === 'settimezone') return runSetTimezone(ctx, text);
   if (pending.action === 'broadcastcopy') return runBroadcastCopy(ctx, pending.context.channelName);
   if (pending.action === 'setcaption') return runSetCaption(ctx, pending.context.alertType, text);
   if (pending.action === 'broadcast') return runBroadcast(ctx, pending.context.channelName, text);
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
   if (pending.action === 'setexactthreshold') return runSetExactThreshold(ctx, pending.context.symbol, text);
   if (pending.action === 'setexactmilestone') return runSetExactMilestone(ctx, pending.context.symbol, text);
-  if (pending.action === 'setlimit') return runSetLimit(ctx, pending.context.key, text);
-  if (pending.action === 'factoryreset') return runFactoryReset(ctx, text);
 
   await ctx.reply("Sorry, I lost track of what you were entering — please tap the button again.");
 }
@@ -3560,19 +3125,10 @@ module.exports = {
   help,
   home,
   hubCmd,
-  publishHubScreen,
-  safetyAdminHubScreen,
-  heldBackAlertsCmd,
-  heldBackAlertsScreen,
-  heldBackAlertsClear,
   pricesCmd,
   statsCmd,
   settingsCmd,
   usageCmd,
-  timezoneStart,
-  timezonePick,
-  timezoneCustomStart,
-  setTimezoneCmd,
   usageScreen,
   auditLogCmd,
   auditLogScreen,
@@ -3628,13 +3184,6 @@ module.exports = {
   addCoinConfirmExecute,
   addCoinCancel,
   coinListScreen,
-  autoSyncCmd,
-  syncNowCmd,
-  autoSyncLogCmd,
-  modeCmd,
-  botModeSet,
-  limitsCmd,
-  limitChangeStart,
   removeCoinCmd,
   removeCoinPick,
   removeCoinConfirmExecute,
@@ -3735,7 +3284,6 @@ module.exports = {
   bulkPickAction,
   bulkPickScope,
   bulkPickMuteDuration,
-  bulkDeleteExecute,
   bulkCancel,
   ruleCmd,
   ruleDel,

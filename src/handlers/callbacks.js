@@ -29,10 +29,6 @@ async function onCallback(ctx) {
           return commands.statsCmd(ctx);
         case 'settings':
           return commands.settingsCmd(ctx);
-        case 'botmode':
-          return commands.modeCmd(ctx);
-        case 'limits':
-          return commands.limitsCmd(ctx);
         case 'test': {
           const screen = menu.testPicker(recentCoins.getRecent());
           return ctx.reply(screen.text, { reply_markup: { inline_keyboard: screen.keyboard } });
@@ -63,12 +59,6 @@ async function onCallback(ctx) {
           return commands.moversScreen(ctx);
         case 'markets':
           return commands.marketsHubScreen(ctx);
-        case 'publish':
-          return commands.publishHubScreen(ctx);
-        case 'safetyadmin':
-          return commands.safetyAdminHubScreen(ctx);
-        case 'heldback':
-          return commands.heldBackAlertsScreen(ctx);
         case 'feargreed':
           return commands.fearGreedScreen(ctx);
         case 'tags':
@@ -397,32 +387,6 @@ async function onCallback(ctx) {
       return undefined;
     }
 
-    // ---- heldback: clear the held-back alerts log ----
-    if (ns === 'heldback') {
-      if (a1 === 'clear') return commands.heldBackAlertsClear(ctx);
-      return undefined;
-    }
-
-    // ---- tz: timezone picker ----
-    if (ns === 'tz') {
-      if (a1 === 'start') return commands.timezoneStart(ctx);
-      if (a1 === 'set') return commands.timezonePick(ctx, data.split(':').slice(2).join(':'));
-      if (a1 === 'custom') return commands.timezoneCustomStart(ctx);
-      return undefined;
-    }
-
-    // ---- mode: Bot Mode picker (Hair-Trigger / Sharp Shooter / Steady Hand / Anti-Spam) ----
-    if (ns === 'mode') {
-      if (a1 === 'set') return commands.botModeSet(ctx, a2);
-      return undefined;
-    }
-
-    // ---- limit: advanced runtime limits editor ----
-    if (ns === 'limit') {
-      if (a1 === 'change') return commands.limitChangeStart(ctx, a2);
-      return undefined;
-    }
-
     // ---- markets: hub — categories, top20, gainers/losers, watchlist ----
     if (ns === 'markets') {
       if (a1 === 'cat') return commands.marketsCategoryScreen(ctx, a2);
@@ -462,7 +426,6 @@ async function onCallback(ctx) {
         return commands.bulkPickScope(ctx, scopeArg);
       }
       if (a1 === 'mutedur') return commands.bulkPickMuteDuration(ctx, a2);
-      if (a1 === 'deleteconfirm') return commands.bulkDeleteExecute(ctx);
       if (a1 === 'cancel') return commands.bulkCancel(ctx);
       return undefined;
     }

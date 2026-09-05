@@ -2,7 +2,7 @@ const { pool } = require('./pool');
 
 async function getAll() {
   const { rows } = await pool.query(
-    'SELECT symbol, name, binance_pair, color, is_stable, source FROM custom_coins ORDER BY added_at ASC'
+    'SELECT symbol, name, binance_pair, color, is_stable FROM custom_coins ORDER BY added_at ASC'
   );
   return rows.map((r) => ({
     symbol: r.symbol,
@@ -11,19 +11,15 @@ async function getAll() {
     color: r.color,
     isStable: r.is_stable,
     milestoneStep: null, // custom coins opt out of milestone alerts by default
-    source: r.source || 'manual',
   }));
 }
 
-// source: 'manual' (default, via /addcoin) or 'autosync' (via
-// services/coinSync.js) — see migrations/011_v0_10_0.sql for why this
-// matters: auto-sync is only ever allowed to remove a coin it added itself.
-async function add({ symbol, name, binancePair, color, isStable, source }) {
+async function add({ symbol, name, binancePair, color, isStable }) {
   await pool.query(
-    `INSERT INTO custom_coins (symbol, name, binance_pair, color, is_stable, source)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO custom_coins (symbol, name, binance_pair, color, is_stable)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (symbol) DO NOTHING`,
-    [symbol, name, binancePair, color, !!isStable, source === 'autosync' ? 'autosync' : 'manual']
+    [symbol, name, binancePair, color, !!isStable]
   );
 }
 

@@ -1,7 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const poller = require('./poller');
-const settingsDb = require('../db/settings');
 
 let stopped = false;
 let timeoutHandle = null;
@@ -15,11 +14,7 @@ async function loop(bot) {
     logger.error('Unhandled error in poll tick', { message: err.message, stack: err.stack });
   } finally {
     if (!stopped) {
-      // Read live every cycle — see db/settings.js's runtime limits. Means
-      // a change from /limits takes effect on the very next tick, no
-      // restart needed.
-      const intervalMs = await settingsDb.getRuntimeLimit('pollIntervalMs', config.pollIntervalMs).catch(() => config.pollIntervalMs);
-      timeoutHandle = setTimeout(() => loop(bot), intervalMs);
+      timeoutHandle = setTimeout(() => loop(bot), config.pollIntervalMs);
     }
   }
 }
