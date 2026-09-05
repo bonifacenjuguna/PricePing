@@ -154,4 +154,18 @@ async function removeCoin(symbolRaw) {
   logger.info(`Removed custom coin ${symbol} (via /removecoin)`);
 }
 
-module.exports = { loadCustomCoins, addCoin, removeCoin };
+// Factory reset support: removes every coin that isn't one of the
+// original 10, reusing removeCoin()'s cleanup (DB row, tags, logo file)
+// for each. Safe to call even with zero custom coins. Deliberately
+// iterates a snapshot of symbols first — splicing config.coins while
+// iterating config.coins itself would skip entries.
+async function removeAllCustomCoins() {
+  const customSymbols = config.coins.filter((c) => !BUILT_IN_SYMBOLS.has(c.symbol)).map((c) => c.symbol);
+  for (const symbol of customSymbols) {
+    // eslint-disable-next-line no-await-in-loop
+    await removeCoin(symbol);
+  }
+  return customSymbols;
+}
+
+module.exports = { loadCustomCoins, addCoin, removeCoin, removeAllCustomCoins };

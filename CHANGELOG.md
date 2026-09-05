@@ -3,6 +3,45 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.11.0 — Bot Modes, live limits, full factory reset
+
+**Added**
+- **Bot Modes**: `/mode` (or Settings \u2192 Bot Mode) picks between four
+  presets that scale sensitivity, frequency, and restraint together:
+  Hair-Trigger (1/4x threshold), Sharp Shooter (1/2x), Steady Hand (1x,
+  default), Anti-Spam (2x threshold, plus a hard minimum gap between any
+  two posts regardless of coin). A threshold or cooldown you've set by
+  hand for a specific coin is never scaled by the mode \u2014 only the
+  shared defaults are.
+- **Advanced limits** (`/limits`, or Settings \u2192 Advanced limits):
+  poll interval, default cooldown, hourly alert cap, default mute
+  duration, delay between messages, failed-check warning threshold,
+  health-check interval, "stuck" multiplier, and memory limit are now
+  live-editable through the bot, each with a safe min/max range so a
+  typo can't break the bot. Previously all nine were environment
+  variables requiring a redeploy to change.
+- **Full factory reset** (Safety & Admin \u2192 Reset \u2192 Full factory
+  reset): wipes every table in the database \u2014 every custom coin,
+  channel, threshold, milestone, cooldown, tag, mute, caption, variable,
+  schedule, rule, and every log \u2014 and rebuilds exactly what a
+  brand-new install would have: the original 10 coins, default
+  thresholds, one channel, Steady Hand mode. Gated behind typing `RESET`
+  in chat rather than a button tap, since it's irreversible. The
+  existing lighter "Reset EVERYTHING" (settings categories only, coins
+  untouched) is still there separately for smaller cleanups.
+
+**Changed**
+- Poll interval, heartbeat checks, and memory checks now read their
+  timing live every cycle instead of once at startup \u2014 a change from
+  `/limits` takes effect on the next cycle, no restart needed.
+
+**Migration note:** run `npm run migrate` after deploying \u2014 adds an
+`is_custom` flag to `thresholds` so Bot Modes know which thresholds were
+hand-set (never scaled) versus still on the seeded default (scaled by
+mode).
+
+---
+
 ## v0.10.0 — Binance auto-sync
 
 **Added**

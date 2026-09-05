@@ -29,6 +29,10 @@ async function onCallback(ctx) {
           return commands.statsCmd(ctx);
         case 'settings':
           return commands.settingsCmd(ctx);
+        case 'botmode':
+          return commands.modeCmd(ctx);
+        case 'limits':
+          return commands.limitsCmd(ctx);
         case 'test': {
           const screen = menu.testPicker(recentCoins.getRecent());
           return ctx.reply(screen.text, { reply_markup: { inline_keyboard: screen.keyboard } });
@@ -404,6 +408,18 @@ async function onCallback(ctx) {
       if (a1 === 'start') return commands.timezoneStart(ctx);
       if (a1 === 'set') return commands.timezonePick(ctx, data.split(':').slice(2).join(':'));
       if (a1 === 'custom') return commands.timezoneCustomStart(ctx);
+      return undefined;
+    }
+
+    // ---- mode: Bot Mode picker (Hair-Trigger / Sharp Shooter / Steady Hand / Anti-Spam) ----
+    if (ns === 'mode') {
+      if (a1 === 'set') return commands.botModeSet(ctx, a2);
+      return undefined;
+    }
+
+    // ---- limit: advanced runtime limits editor ----
+    if (ns === 'limit') {
+      if (a1 === 'change') return commands.limitChangeStart(ctx, a2);
       return undefined;
     }
 

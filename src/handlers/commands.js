@@ -30,6 +30,7 @@ const telegramSender = require('../services/telegramSender');
 const chartRenderer = require('../services/chartRenderer');
 const cardRenderer = require('../services/cardRenderer');
 const coinRegistry = require('../services/coinRegistry');
+const factoryResetDb = require('../db/factoryReset');
 const templateEngine = require('../services/templateEngine');
 const actions = require('../services/actions');
 const pendingInput = require('../services/pendingInput');
@@ -691,7 +692,8 @@ async function mute(ctx) {
     await ctx.reply(`Usage: /mute SYMBOL [DURATION]\nKnown symbols: ${config.coins.map((c) => c.symbol).join(', ')}`);
     return;
   }
-  const durationMs = parseDuration(parts[2]) || config.defaultMuteMs;
+  const defaultMuteMinutes = await settingsDb.getRuntimeLimit('defaultMuteDurationMinutes', config.defaultMuteMs / 60000);
+  const durationMs = parseDuration(parts[2]) || defaultMuteMinutes * 60000;
   await coinStateDb.setMuteUntil(symbol, new Date(Date.now() + durationMs));
   eventsDb.recordAudit(`${symbol} muted for ${formatRemaining(durationMs)}`).catch(() => {});
   await ctx.reply(`${symbol} muted for ${formatRemaining(durationMs)}. /unmute ${symbol} to lift it early.`);
@@ -1192,6 +1194,71 @@ async function autoSyncLogCmd(ctx) {
     return `${when} \u2014 ${parts.length ? parts.join(' ') : 'no changes'}`;
   });
   await ctx.reply(`Recent auto-sync runs:\n${lines.join('\n')}`);
+}
+
+// ---------------------------------------------------------------------------
+// Bot Mode + Advanced limits — see db/settings.js for the mode multipliers
+// and bounds. Both screens are reached from Settings, and /mode / /limits
+// work as direct shortcuts too.
+// ---------------------------------------------------------------------------
+async function botModeScreen(ctx) {
+  const current = await settingsDb.getBotMode();
+  const screen = menu.botModePicker(current, settingsDb.BOT_MODES);
+  await inlineEdit(ctx, screen);
+}
+async function modeCmd(ctx) {
+  await botModeScreen(ctx);
+}
+async function botModeSet(ctx, key) {
+  await ctx.answerCbQuery();
+  const def = await settingsDb.setBotMode(key);
+  eventsDb.recordAudit(`bot mode: ${def.label}`).catch(() => {});
+  await botModeScreen(ctx);
+}
+
+async function limitsScreenRender(ctx) {
+  const fallbacks = {
+    pollIntervalMs: config.pollIntervalMs,
+    cooldownMinutes: config.cooldownMinutes,
+    maxAlertsPerHour: config.maxAlertsPerHour,
+    defaultMuteDurationMinutes: config.defaultMuteMs / 60000,
+    sendDelayMs: config.sendDelayMs,
+    binanceFailureAlertThreshold: config.binanceFailureAlertThreshold,
+    heartbeatCheckIntervalMs: config.heartbeatCheckIntervalMs,
+    heartbeatStaleMultiplier: config.heartbeatStaleMultiplier,
+    memoryLimitMb: config.memoryLimitMb,
+  };
+  const values = {};
+  for (const key of Object.keys(settingsDb.RUNTIME_LIMIT_BOUNDS)) {
+    // eslint-disable-next-line no-await-in-loop
+    values[key] = await settingsDb.getRuntimeLimit(key, fallbacks[key]);
+  }
+  const screen = menu.limitsScreen(values, settingsDb.RUNTIME_LIMIT_BOUNDS);
+  await inlineEdit(ctx, screen);
+}
+async function limitsCmd(ctx) {
+  await limitsScreenRender(ctx);
+}
+async function limitChangeStart(ctx, key) {
+  await ctx.answerCbQuery();
+  const bounds = settingsDb.RUNTIME_LIMIT_BOUNDS[key];
+  if (!bounds) return;
+  const prompt = await ctx.reply(
+    `Type a new value for "${key}" (${bounds.min}-${bounds.max}). Out-of-range values are automatically capped to the nearest limit. /cancel to stop.`
+  );
+  pendingInput.set('setlimit', { key }, prompt);
+}
+async function runSetLimit(ctx, key, text) {
+  const value = Number(text.trim());
+  if (!Number.isFinite(value)) {
+    await ctx.reply('That\u2019s not a number \u2014 try again, or /cancel.');
+    return;
+  }
+  const applied = await settingsDb.setRuntimeLimit(key, value);
+  eventsDb.recordAudit(`limit ${key} set to ${applied}`).catch(() => {});
+  const note = applied !== value ? ` (capped from ${value} to stay in the safe range)` : '';
+  await ctx.reply(`${key} is now ${applied}${note}.`);
+  await limitsScreenRender(ctx);
 }
 
 async function removeCoinCmd(ctx) {
@@ -2472,12 +2539,17 @@ async function resetMenuScreen(ctx) {
   await inlineEdit(ctx, menu.resetMenu());
 }
 async function resetConfirmScreen(ctx, type) {
+  if (type === 'factory') {
+    const prompt = await ctx.reply(menu.factoryResetConfirm().text);
+    pendingInput.set('factoryreset', {}, prompt);
+    return;
+  }
   await inlineEdit(ctx, menu.resetConfirm(type));
 }
 
 const RESET_HANDLERS = {
   thresholds: async () => {
-    for (const [symbol, value] of Object.entries(config.defaultThresholds)) await thresholdsDb.set(symbol, value, 'usd');
+    for (const [symbol, value] of Object.entries(config.defaultThresholds)) await thresholdsDb.set(symbol, value, 'usd', false);
   },
   milestones: async () => milestonesDb.clearAll(),
   cooldowns: async () => cooldownsDb.clearAll(),
@@ -2516,6 +2588,44 @@ async function resetExecute(ctx, type) {
   }
   eventsDb.recordAudit(`reset: ${type}`).catch(() => {});
   await ctx.reply(`Reset complete: ${type}.`);
+}
+
+// Full factory reset — gated behind typing "RESET" rather than a button
+// tap, since this is irreversible and touches everything (see
+// menu.factoryResetConfirm for exactly what it deletes). Order matters:
+// remove custom coins first (while their DB rows/logo files still exist,
+// so coinRegistry's normal cleanup runs cleanly), THEN wipe every table
+// (clears whatever's left, plus all logs/settings/channels), THEN reseed
+// exactly what a brand-new install would have.
+async function runFactoryReset(ctx, text) {
+  if (text.trim().toUpperCase() !== 'RESET') {
+    await ctx.reply('Factory reset cancelled \u2014 you didn\u2019t type RESET exactly.');
+    return;
+  }
+  await ctx.reply('Wiping everything and rebuilding from scratch \u2014 this takes a moment...');
+
+  try {
+    await coinRegistry.removeAllCustomCoins();
+    await factoryResetDb.wipeAllTables();
+
+    // Reseed exactly what migrate.js seeds on a first-ever install.
+    for (const [symbol, thresholdUsd] of Object.entries(config.defaultThresholds)) {
+      // eslint-disable-next-line no-await-in-loop
+      await thresholdsDb.ensureDefault(symbol, thresholdUsd, 'usd');
+    }
+    await settingsDb.set('paused', 'false');
+    await settingsDb.set('announcement_sent', 'false');
+    await channelsDb.add('main', config.channelId);
+    await channelsDb.setDefault('main');
+
+    eventsDb.recordAudit('FULL FACTORY RESET \u2014 entire database wiped').catch(() => {});
+    await ctx.reply(
+      'Done. The bot is back to brand new: only the original 10 coins, default thresholds, one channel, Steady Hand mode, nothing else. Run /start to see it fresh.'
+    );
+  } catch (err) {
+    logger.error('Factory reset failed', { message: err.message, stack: err.stack });
+    await ctx.reply(`Something went wrong during the factory reset: ${err.message}. Check the logs \u2014 the bot may be in a partially-reset state.`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3354,6 +3464,8 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'importconfig') return runImportConfig(ctx, text);
   if (pending.action === 'setexactthreshold') return runSetExactThreshold(ctx, pending.context.symbol, text);
   if (pending.action === 'setexactmilestone') return runSetExactMilestone(ctx, pending.context.symbol, text);
+  if (pending.action === 'setlimit') return runSetLimit(ctx, pending.context.key, text);
+  if (pending.action === 'factoryreset') return runFactoryReset(ctx, text);
 
   await ctx.reply("Sorry, I lost track of what you were entering — please tap the button again.");
 }
@@ -3434,6 +3546,10 @@ module.exports = {
   autoSyncCmd,
   syncNowCmd,
   autoSyncLogCmd,
+  modeCmd,
+  botModeSet,
+  limitsCmd,
+  limitChangeStart,
   removeCoinCmd,
   removeCoinPick,
   removeCoinConfirmExecute,

@@ -961,8 +961,29 @@ function resetMenu() {
   const buttons = options.map((o) => ({ text: o.text, callback_data: `reset:confirm:${o.code}` }));
   return {
     text,
-    keyboard: [...chunk(buttons, 2), [{ text: '\u26A0 Reset EVERYTHING', callback_data: 'reset:confirm:everything' }], ...footer('nav:safetyadmin')],
+    keyboard: [
+      ...chunk(buttons, 2),
+      [{ text: '\u26A0 Reset EVERYTHING (settings only)', callback_data: 'reset:confirm:everything' }],
+      [{ text: '\u2620 Full factory reset \u2014 wipe the whole database', callback_data: 'reset:confirm:factory' }],
+      ...footer('nav:safetyadmin'),
+    ],
   };
+}
+
+function factoryResetConfirm() {
+  const text =
+    `\u2620 Full factory reset\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
+    `This deletes EVERYTHING and cannot be undone:\n` +
+    `\u2022 Every custom coin (auto-sync and hand-added)\n` +
+    `\u2022 Every channel except the original, every default channel routing\n` +
+    `\u2022 Every threshold, milestone, cooldown, tag, and mute\n` +
+    `\u2022 Every caption template and custom variable\n` +
+    `\u2022 Every schedule and rule\n` +
+    `\u2022 Every log: alerts, audit, usage, held-back, auto-sync history\n` +
+    `\u2022 Bot Mode, advanced limits, quiet hours, timezone, card style, pinned shortcuts \u2014 back to Steady Hand and factory settings\n\n` +
+    `The bot goes back to exactly the state it was in the first time it ever ran \u2014 only the original 10 coins, default thresholds, one channel.\n\n` +
+    `Type RESET (all capitals) in chat to confirm. Anything else cancels it.`;
+  return { text, keyboard: [[{ text: '\u274C Cancel', callback_data: 'nav:reset' }], HOME_ROW] };
 }
 
 function resetConfirm(type) {
@@ -1069,16 +1090,13 @@ function settings({ compactCards = false, quietHours = null, tz = 'UTC' } = {}) 
   const text =
     `Settings\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n` +
     `Timezone          ${tzLabel}\n` +
-    `Poll interval     ${config.pollIntervalMs / 1000}s\n` +
-    `Cooldown default  ${config.cooldownMinutes}m per coin\n` +
-    `Hourly send cap   ${config.maxAlertsPerHour}\n` +
-    `Memory limit      ${config.memoryLimitMb}MB\n` +
     `Card style        ${compactCards ? 'compact' : 'full'}\n` +
     `Quiet hours       ${quietHoursLine}\n\n` +
-    `Poll/cooldown/cap/memory are environment variables (next restart). ` +
-    `Everything else here \u2014 timezone, card style, quiet hours (/quiethours), channels, captions, thresholds, milestones, cooldowns, schedules, and rules \u2014 is live, see /commands.`;
+    `Bot Mode and every timing/limit setting (poll interval, cooldown, hourly cap, and more) ` +
+    `are now live-editable below \u2014 nothing here needs a restart anymore.`;
   const keyboard = [
     [{ text: '\uD83C\uDF0D Set timezone', callback_data: 'tz:start' }],
+    [{ text: '\u2699 Bot Mode', callback_data: 'nav:botmode' }, { text: '\uD83D\uDD27 Advanced limits', callback_data: 'nav:limits' }],
     [
       { text: '\u2B50 Quick actions', callback_data: 'nav:pins' },
       { text: '\uD83D\uDCBE Backup', callback_data: 'nav:backup' },
@@ -1094,7 +1112,43 @@ function settings({ compactCards = false, quietHours = null, tz = 'UTC' } = {}) 
   return { text, keyboard };
 }
 
-// ---------- Test picker (advanced) ----------
+// ---------- Bot Mode picker ----------
+function botModePicker(currentKey, modes) {
+  const lines = [`Bot Mode\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n`];
+  const rows = [];
+  for (const [key, def] of Object.entries(modes)) {
+    const active = key === currentKey ? ' (current)' : '';
+    lines.push(`${def.label}${active} \u2014 ${def.description}`);
+    rows.push([{ text: key === currentKey ? `\u2713 ${def.label}` : def.label, callback_data: `mode:set:${key}` }]);
+  }
+  const text = lines.join('\n');
+  return { text, keyboard: [...rows, ...footer('nav:settings')] };
+}
+
+// ---------- Live runtime limits editor ----------
+const LIMIT_LABELS = {
+  pollIntervalMs: { label: 'Price check interval', unit: 'ms', current: (v) => `${(v / 1000).toFixed(0)}s` },
+  cooldownMinutes: { label: 'Default cooldown', unit: 'minutes', current: (v) => `${v}m` },
+  maxAlertsPerHour: { label: 'Hourly alert cap', unit: 'alerts/hour', current: (v) => `${v}` },
+  defaultMuteDurationMinutes: { label: 'Default mute duration', unit: 'minutes', current: (v) => `${v}m` },
+  sendDelayMs: { label: 'Delay between messages', unit: 'ms', current: (v) => `${v}ms` },
+  binanceFailureAlertThreshold: { label: 'Failed-check warning threshold', unit: 'consecutive failures', current: (v) => `${v}` },
+  heartbeatCheckIntervalMs: { label: 'Health-check interval', unit: 'ms', current: (v) => `${(v / 60000).toFixed(1)}min` },
+  heartbeatStaleMultiplier: { label: '"Stuck" multiplier', unit: 'x check interval', current: (v) => `${v}x` },
+  memoryLimitMb: { label: 'Memory limit', unit: 'MB', current: (v) => `${v}MB` },
+};
+function limitsScreen(values, bounds) {
+  const lines = ['Advanced limits\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500'];
+  const rows = [];
+  for (const [key, meta] of Object.entries(LIMIT_LABELS)) {
+    const b = bounds[key];
+    lines.push(`${meta.label}: ${meta.current(values[key])} (range ${b.min}-${b.max} ${meta.unit})`);
+    rows.push([{ text: `Change: ${meta.label}`, callback_data: `limit:change:${key}` }]);
+  }
+  lines.push('\nEach value is capped to a safe range automatically \u2014 a typo can\u2019t break the bot.');
+  const text = lines.join('\n');
+  return { text, keyboard: [...rows, ...footer('nav:settings')] };
+}
 function testPicker(recentSymbols = []) {
   const text = 'Test alert \u2014 pick a coin:';
   return { text, keyboard: coinGrid('test:coin', { extraRows: [[{ text: '\u26A1 Run full pipeline check', callback_data: 'test:full' }]], recentSymbols, parentCallback: 'nav:safetyadmin' }) };

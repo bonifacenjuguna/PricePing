@@ -71,6 +71,8 @@ bot.command('removecoin', commands.removeCoinCmd);
 bot.command('autosync', commands.autoSyncCmd);
 bot.command('syncnow', commands.syncNowCmd);
 bot.command('autosynclog', commands.autoSyncLogCmd);
+bot.command('mode', commands.modeCmd);
+bot.command('limits', commands.limitsCmd);
 bot.command('coins', commands.coinListScreen);
 bot.command('history', commands.historyCmd);
 bot.command('stats', commands.statsCmd);
@@ -319,6 +321,8 @@ async function shutdown(signal) {
   heartbeatWatchdog.stop();
   automationScheduler.stop();
   coinSync.stop();
+  memoryWatchdog.stop();
+  heartbeatWatchdog.stop();
   try {
     bot.stop(signal);
   } catch {

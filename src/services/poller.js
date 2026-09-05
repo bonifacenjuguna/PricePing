@@ -51,7 +51,8 @@ async function handleBinanceFailure(bot, err) {
   consecutiveFailures += 1;
   logger.warn(`Binance fetch failed (${consecutiveFailures} consecutive)`, { message: err.message });
 
-  if (consecutiveFailures >= config.binanceFailureAlertThreshold && !failureAlertSent) {
+  const threshold = await settingsDb.getRuntimeLimit('binanceFailureAlertThreshold', config.binanceFailureAlertThreshold);
+  if (consecutiveFailures >= threshold && !failureAlertSent) {
     failureAlertSent = true;
     await events.record('binance_outage', `${consecutiveFailures} consecutive failed ticks`);
     try {
@@ -100,6 +101,17 @@ function qualifiesForThresholdAlert(price, baseline, threshold) {
   return { qualifies: moveSize >= threshold.value, changeUsd, changePct };
 }
 
+// Bot Modes (see db/settings.js): scales the DEFAULT threshold/cooldown/cap
+// up or down together. A threshold the admin explicitly set (isCustom) is
+// never scaled — they already chose that exact number. A per-coin cooldown
+// override works the same way (it's already only applied when no override
+// exists, see below) — this function only touches the base/default case.
+function effectiveThresholdValue(threshold, modeDef) {
+  if (!threshold) return threshold;
+  if (threshold.isCustom) return threshold;
+  return { ...threshold, value: threshold.value * modeDef.thresholdMultiplier };
+}
+
 async function tickInner(bot) {
   const paused = await resolvePauseState();
   if (paused) return;
@@ -107,6 +119,19 @@ async function tickInner(bot) {
   const quietHours = await settingsDb.getQuietHours();
   const quietNow = isWithinQuietHours(quietHours);
   const compact = await settingsDb.getCompactCards();
+
+  // Bot Mode + live runtime limits — see db/settings.js. modeDef scales the
+  // seeded defaults below; a value already overridden via /limits or an
+  // explicit per-coin choice is left alone (see effectiveThresholdValue and
+  // the cooldown lookup further down).
+  const modeKey = await settingsDb.getBotMode();
+  const modeDef = settingsDb.getModeDefinition(modeKey);
+  const [baseCooldownMinutes, baseMaxAlertsPerHour, sendDelayMs] = await Promise.all([
+    settingsDb.getRuntimeLimit('cooldownMinutes', config.cooldownMinutes),
+    settingsDb.getRuntimeLimit('maxAlertsPerHour', config.maxAlertsPerHour),
+    settingsDb.getRuntimeLimit('sendDelayMs', config.sendDelayMs),
+  ]);
+  const effectiveMaxAlertsPerHour = Math.max(1, Math.round(baseMaxAlertsPerHour * modeDef.hourlyCapMultiplier));
 
   const [thresholdChannel, milestoneChannel] = await Promise.all([
     channelsDb.resolveForType('threshold'),
@@ -219,14 +244,17 @@ async function tickInner(bot) {
 
     if (muteActive(state.pausedUntil) || !thresholdChannel) continue;
 
-    const threshold = thresholds[coin.symbol];
+    const threshold = effectiveThresholdValue(thresholds[coin.symbol], modeDef);
     const baseline = state.lastAlertPrice;
     if (baseline === null || baseline === undefined) continue;
 
     const { qualifies, changeUsd, changePct } = qualifiesForThresholdAlert(price, baseline, threshold);
     if (!qualifies || quietNow) continue;
 
-    const cooldownMinutes = cooldownOverrides[coin.symbol] ?? config.cooldownMinutes;
+    // A per-coin cooldown override (?? branch below) is an explicit choice,
+    // same principle as isCustom on thresholds — never mode-scaled. Only
+    // the shared base cooldown is.
+    const cooldownMinutes = cooldownOverrides[coin.symbol] ?? baseCooldownMinutes * modeDef.cooldownMultiplier;
     if (cooldownActive(state.lastAlertAt, cooldownMinutes)) continue;
 
     const direction = changeUsd >= 0 ? 'up' : 'down';
@@ -253,14 +281,14 @@ async function tickInner(bot) {
   // actual visible record instead of just a warning message with nothing
   // to show for it (Safety & Admin \u2192 Held-back alerts).
   const sentLastHour = await alertsLogDb.countLastHour();
-  const room = Math.max(config.maxAlertsPerHour - sentLastHour, 0);
+  const room = Math.max(effectiveMaxAlertsPerHour - sentLastHour, 0);
   let capped = toSend;
   if (toSend.length > room) {
     capped = toSend.slice(0, room);
     const overflow = toSend.slice(room);
     for (const alert of overflow) {
       // eslint-disable-next-line no-await-in-loop
-      await heldBackAlertsDb.record(alert.coin.symbol, alert.alertType, `hourly cap (${config.maxAlertsPerHour}) reached`);
+      await heldBackAlertsDb.record(alert.coin.symbol, alert.alertType, `hourly cap (${effectiveMaxAlertsPerHour}) reached`);
     }
     // DB-backed dedup, not an in-memory flag — this bot gets redeployed
     // often (a zip upload, not a long-lived unchanged process), and an
@@ -270,11 +298,11 @@ async function tickInner(bot) {
     const dueForNotify = !lastNotified || Date.now() - lastNotified.getTime() > 55 * 60 * 1000;
     if (dueForNotify) {
       await settingsDb.setLastCapNotifiedAt(new Date());
-      await events.record('alert_cap_hit', `${toSend.length} qualified, only ${room} sent (hourly cap ${config.maxAlertsPerHour})`);
+      await events.record('alert_cap_hit', `${toSend.length} qualified, only ${room} sent (hourly cap ${effectiveMaxAlertsPerHour})`);
       try {
         await bot.telegram.sendMessage(
           config.adminId,
-          `Hourly alert cap (${config.maxAlertsPerHour}) reached \u2014 ${toSend.length - room} alert(s) held back this tick. See Safety & Admin \u2192 Held-back alerts, or /heldback.`
+          `Hourly alert cap (${effectiveMaxAlertsPerHour}) reached \u2014 ${toSend.length - room} alert(s) held back this tick. See Safety & Admin \u2192 Held-back alerts, or /heldback.`
         );
       } catch {
         /* non-fatal */
@@ -282,12 +310,30 @@ async function tickInner(bot) {
     }
   }
 
+  // Anti-Spam's extra restriction: a minimum gap between ANY two posts,
+  // regardless of which coin — on top of (not instead of) the per-coin
+  // cooldown above. Other modes don't set minGapBetweenPostsSeconds, so
+  // this is a no-op for them.
+  if (modeDef.minGapBetweenPostsSeconds && capped.length) {
+    const lastSentRaw = await settingsDb.get('last_any_alert_sent_at');
+    const lastSentAt = lastSentRaw ? new Date(lastSentRaw).getTime() : 0;
+    if (Date.now() - lastSentAt < modeDef.minGapBetweenPostsSeconds * 1000) {
+      for (const alert of capped) {
+        // eslint-disable-next-line no-await-in-loop
+        await heldBackAlertsDb.record(alert.coin.symbol, alert.alertType, `Anti-Spam mode: minimum ${modeDef.minGapBetweenPostsSeconds}s between posts`);
+      }
+      capped = [];
+    }
+  }
+
+
   // Sequential, with a small delay between each — stays comfortably under
   // Telegram's per-chat rate limit even if every coin alerts in the same
   // tick, and avoids rendering more than one image in memory at a time.
   for (const alert of capped) {
     const sent = await telegramSender.sendAlert(bot.telegram, alert, alert.channel);
     if (sent) {
+      await settingsDb.set('last_any_alert_sent_at', new Date().toISOString());
       if (alert.alertType === 'threshold') {
         await coinStateDb.recordAlert(alert.coin.symbol, alert.price);
       } else if (alert.alertType === 'milestone') {
@@ -306,7 +352,7 @@ async function tickInner(bot) {
       await rulesEngine.evaluate(bot.telegram, alert);
     }
     if (capped.length > 1) {
-      await new Promise((resolve) => setTimeout(resolve, config.sendDelayMs));
+      await new Promise((resolve) => setTimeout(resolve, sendDelayMs));
     }
   }
 }
@@ -329,4 +375,4 @@ async function tick(bot) {
   }
 }
 
-module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone, isWithinQuietHours };
+module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone, isWithinQuietHours, effectiveThresholdValue };
