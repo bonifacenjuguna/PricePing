@@ -3,6 +3,43 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.10.0 — Binance auto-sync
+
+**Added**
+- `/autosync` + `/syncnow`: the bot can now periodically check Binance's
+  full spot symbol list (`GET /api/v3/exchangeInfo`) against the tracked
+  coin list and keep them in sync — new USDT pairs get added
+  automatically, pairs that stop trading (delisted, suspended) get
+  removed automatically. **Off by default** — this changes the tracked
+  list without a human confirming each coin, so it's opt-in
+  (`/autosync on`), capped per run (`/autosync limit ADD REMOVE`, default
+  5/5) so one pass can't flood or empty the list, and it only ever
+  removes a coin it added itself — anything added by hand via `/addcoin`,
+  or one of the original 10, is never touched by auto-sync.
+- `/syncnow` runs a pass immediately (still respecting the caps above)
+  and reports results straight back in chat instead of waiting for the
+  next scheduled check — useful the first time, to catch up on however
+  many pairs Binance has added since this bot's original coin list was
+  written.
+- `/autosynclog` — last 10 runs (what was added/removed, or the error if
+  the Binance request failed).
+- Leveraged/rebasing tokens (`*UP`, `*DOWN`, `*BULL`, `*BEAR` — e.g.
+  `BTCUP`) are filtered out of what auto-sync considers "a coin": they're
+  real tradable pairs but their price isn't the underlying asset's actual
+  market price, which isn't what a price-alert bot's admin wants
+  auto-added.
+- Auto-added coins get a generated (but stable — same symbol always gets
+  the same color) placeholder color and their Binance ticker as the
+  display name, since neither is available from Binance's API. Rename by
+  removing and re-adding by hand with `/addcoin` if you want something
+  nicer.
+
+**Migration note:** run `npm run migrate` after deploying — adds a
+`source` column to `custom_coins` (defaults `'manual'` for everything
+already there) and a new `autosync_runs` table.
+
+---
+
 ## v0.9.0 — Navigation redesign, timezone support, fixed a real data-loss bug
 
 **Fixed \u2014 the important one**

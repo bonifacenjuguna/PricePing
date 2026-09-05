@@ -20,6 +20,7 @@ const memoryWatchdog = require('./services/memoryWatchdog');
 const heartbeatWatchdog = require('./services/heartbeatWatchdog');
 const automationScheduler = require('./services/automationScheduler');
 const coinRegistry = require('./services/coinRegistry');
+const coinSync = require('./services/coinSync');
 const cardRenderer = require('./services/cardRenderer');
 
 const { pool } = require('./db/pool');
@@ -67,6 +68,9 @@ bot.command('resetcooldown', commands.resetCooldownCmd);
 bot.command('addcoin', commands.addCoinCmd);
 bot.command('addcoins', commands.addCoinCmd);
 bot.command('removecoin', commands.removeCoinCmd);
+bot.command('autosync', commands.autoSyncCmd);
+bot.command('syncnow', commands.syncNowCmd);
+bot.command('autosynclog', commands.autoSyncLogCmd);
 bot.command('coins', commands.coinListScreen);
 bot.command('history', commands.historyCmd);
 bot.command('stats', commands.statsCmd);
@@ -301,6 +305,7 @@ async function start() {
   memoryWatchdog.init(bot);
   heartbeatWatchdog.init(bot);
   automationScheduler.init(bot);
+  coinSync.init(bot);
 
   logger.info(`PricePing v${require('../package.json').version} is running`);
 }
@@ -313,6 +318,7 @@ async function shutdown(signal) {
   scheduler.stop();
   heartbeatWatchdog.stop();
   automationScheduler.stop();
+  coinSync.stop();
   try {
     bot.stop(signal);
   } catch {

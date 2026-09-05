@@ -83,7 +83,10 @@ async function fetchLogo(coin) {
 // symbol/name/binancePair/color required; isStable optional (default false).
 // defaultThreshold/thresholdType optional — falls back to a conservative
 // 1%-move default so a freshly-added coin doesn't sit alert-silent forever.
-async function addCoin({ symbol, name, binancePair, color, isStable, defaultThreshold, thresholdType }) {
+// source: 'manual' (default, /addcoin) or 'autosync' (services/coinSync.js)
+// — persisted so a later auto-sync run knows which coins it's allowed to
+// remove again on delisting (never a manually-added one).
+async function addCoin({ symbol, name, binancePair, color, isStable, defaultThreshold, thresholdType, source }) {
   const sym = symbol.toUpperCase();
   if (config.coins.find((c) => c.symbol === sym)) {
     throw new Error(`${sym} is already tracked`);
@@ -96,6 +99,7 @@ async function addCoin({ symbol, name, binancePair, color, isStable, defaultThre
     color,
     isStable: !!isStable,
     milestoneStep: null,
+    source: source === 'autosync' ? 'autosync' : 'manual',
   };
 
   await customCoinsDb.add(coin);

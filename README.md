@@ -130,6 +130,32 @@ AAVE` (space- or line-separated), one confirm covers the whole batch, and
 anything not tracked or not removable (the built-in 10) is reported and
 skipped rather than blocking the rest.
 
+### Auto-sync with Binance
+
+Instead of adding coins by hand one at a time, `/autosync on` lets the
+bot keep the list in sync with Binance's own spot market on its own —
+periodically diffing the tracked list against `GET /api/v3/exchangeInfo`
+(Binance's live catalog of every spot symbol, its status, and quote
+asset) and applying the difference: **off by default**, since this
+changes what's tracked without a human confirming each coin.
+
+- New USDT pairs that show up on Binance and aren't tracked yet get
+  added automatically (generated color, ticker as the name — rename by
+  hand later if you want).
+- Coins auto-sync *itself* added, once no longer `TRADING` on Binance,
+  get removed automatically. It never removes anything you added with
+  `/addcoin`, and never touches the original 10 — only ever undoes its
+  own additions.
+- Leveraged/rebasing tokens (`BTCUP`, `ETHDOWN`, etc.) are filtered out;
+  they're real Binance pairs but not "a coin" in any useful sense here.
+- Every run is capped (`/autosync limit ADD REMOVE`, default 5/5) so one
+  pass can't flood or empty the list — growth happens gradually.
+
+Commands: `/autosync [on|off|status|quote ASSET|limit ADD REMOVE|interval
+HOURS]` for configuration, `/syncnow` to run a pass immediately (still
+capped) instead of waiting for the next scheduled check, `/autosynclog`
+for the last 10 runs.
+
 ## Markets — dynamic categories, Top 20, gainers/losers, watchlist
 
 `/markets` (also its own hub button) is a live-updating browser on top of
@@ -411,7 +437,7 @@ alongside it: `heartbeatWatchdog.js` and `automationScheduler.js` (checks
 | Pause / mute | `/pause [duration]` `/resume` `/mute SYMBOL [duration]` `/unmute SYMBOL` `/quiethours START END [off]` (local time) |
 | Timezone | `/settimezone [IANA_TZ]` \u2014 also Settings \u2192 Set timezone (preset picker) |
 | Held-back alerts | `/heldback` \u2014 log of alerts delayed by the hourly send cap, also Safety & Admin \u2192 Held-back alerts |
-| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required, or paste several lines to bulk-add) `/removecoin SYMBOL [SYMBOL ...]` `/coins` `/history SYMBOL [channel]` |
+| Coins | `/addcoin SYMBOL PAIR #COLOR [Name]` (confirm required, or paste several lines to bulk-add) `/removecoin SYMBOL [SYMBOL ...]` `/coins` `/history SYMBOL [channel]` `/autosync [on\|off\|status\|quote\|limit\|interval]` `/syncnow` `/autosynclog` |
 | Markets | `/markets` \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20 by market cap, gainers/losers, watchlist \u2014 also its own hub button |
 | Channels | `/channels` `/addchannel name chat_id` `/removechannel name` `/setdefaultchannel name [type]` `/cleardefaultchannel type` |
 | Captions | `/setcaption TYPE[:SYMBOL] <template>` `/previewcaption TYPE[:SYMBOL]` `/resetcaption TYPE[:SYMBOL]` `/variables` `/setvar name value` `/delvar name` |

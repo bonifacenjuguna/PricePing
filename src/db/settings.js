@@ -160,10 +160,42 @@ async function setCompactCards(enabled) {
   return set('compact_cards', enabled ? 'true' : 'false');
 }
 
+// Auto-sync against Binance's full spot symbol list (see
+// services/coinSync.js). Off by default — this is an opt-in feature since
+// it changes the tracked coin list without a human confirming each one.
+// intervalHours: how often the periodic job is allowed to run.
+// maxNewPerRun/maxRemovePerRun: caps so one run can't flood the coin list
+// (or empty it) in a single pass — growth/cleanup happens gradually.
+const DEFAULT_AUTOSYNC = {
+  enabled: false,
+  quoteAsset: 'USDT',
+  maxNewPerRun: 5,
+  maxRemovePerRun: 5,
+  intervalHours: 24,
+  lastRunAt: null,
+};
+async function getAutoSyncConfig() {
+  const raw = await get('autosync_config');
+  if (!raw) return { ...DEFAULT_AUTOSYNC };
+  try {
+    return { ...DEFAULT_AUTOSYNC, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_AUTOSYNC };
+  }
+}
+async function setAutoSyncConfig(partial) {
+  const current = await getAutoSyncConfig();
+  const merged = { ...current, ...partial };
+  await set('autosync_config', JSON.stringify(merged));
+  return merged;
+}
+
 module.exports = {
   get,
   set,
   remove,
+  getAutoSyncConfig,
+  setAutoSyncConfig,
   isPaused,
   setPaused,
   getPausedUntil,

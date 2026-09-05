@@ -80,6 +80,7 @@ async function help(ctx) {
       `/mute SYMBOL [DURATION] / /unmute SYMBOL\n` +
       `/settimezone [IANA_TZ] \u2014 used by /schedule and /quiethours (both take local time now, not UTC) \u00B7 /heldback \u2014 alerts held back by the hourly cap\n` +
       `/addcoin SYMBOL PAIR #COLOR [Name] \u00B7 /removecoin SYMBOL(s) \u00B7 /coins \u2014 both accept several at once (bulk-add pastes multiple lines, removecoin takes SYMBOL SYMBOL ...)\n` +
+      `/autosync [on|off|status|quote|limit|interval] \u2014 auto-track new Binance listings, auto-drop delisted ones \u00B7 /syncnow \u2014 run it now \u00B7 /autosynclog\n` +
       `/markets \u2014 dynamic category browser (auto-classified via CoinGecko), Top 20, gainers/losers, watchlist\n` +
       `Coin settings \u2192 Select multiple \u2014 tap coins to check/uncheck, then remove/mute/set-threshold on all of them at once\n` +
       `/history SYMBOL [channel]\n` +
@@ -1062,6 +1063,137 @@ async function coinListScreen(ctx) {
   const customSymbols = new Set(custom.map((c) => c.symbol));
   await inlineEdit(ctx, menu.coinList(config.coins, customSymbols));
 }
+// ---------------------------------------------------------------------------
+// Binance auto-sync — /autosync (config) and /syncnow (run it), see
+// services/coinSync.js. Off by default: this changes the tracked coin
+// list on its own, so it's opt-in and capped per run (see settings
+// defaults) rather than something that can silently balloon the list.
+// ---------------------------------------------------------------------------
+const coinSync = require('../services/coinSync');
+const autoSyncLogDb = require('../db/autoSyncLog');
+
+function autoSyncStatusText(cfg) {
+  const last = cfg.lastRunAt ? new Date(cfg.lastRunAt).toLocaleString('en-US', { timeZone: 'UTC' }) + ' UTC' : 'never';
+  return (
+    `\uD83D\uDD04 *Binance auto-sync*: ${cfg.enabled ? 'ON' : 'OFF'}\n` +
+    `Quote asset: ${cfg.quoteAsset}\n` +
+    `Max new coins/run: ${cfg.maxNewPerRun} \u00B7 Max removed/run: ${cfg.maxRemovePerRun}\n` +
+    `Check interval: every ${cfg.intervalHours}h\n` +
+    `Last run: ${last}\n\n` +
+    `New coins are added with a generated color and their Binance ticker as the name \u2014 ` +
+    `rename by /removecoin then /addcoin if you want something nicer. Only coins auto-sync ` +
+    `itself added are ever auto-removed; anything you added with /addcoin (or the original 10) is never touched.\n\n` +
+    `/autosync on \u00B7 /autosync off \u00B7 /autosync limit ADD REMOVE \u00B7 /autosync interval HOURS \u00B7 /autosync quote USDT|USDC\n` +
+    `/syncnow \u2014 run it right now \u00B7 /autosynclog \u2014 recent runs`
+  );
+}
+
+async function autoSyncCmd(ctx) {
+  const args = ctx.message.text.replace(/^\/autosync(@\w+)?\s*/, '').trim().split(/\s+/).filter(Boolean);
+  const sub = (args[0] || '').toLowerCase();
+
+  if (!sub || sub === 'status') {
+    const cfg = await settingsDb.getAutoSyncConfig();
+    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  if (sub === 'on' || sub === 'off') {
+    const cfg = await settingsDb.setAutoSyncConfig({ enabled: sub === 'on' });
+    eventsDb.recordAudit(`auto-sync: turned ${sub}`).catch(() => {});
+    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  if (sub === 'quote') {
+    const quote = (args[1] || '').toUpperCase();
+    if (!quote) {
+      await ctx.reply('Usage: /autosync quote USDT (or USDC, etc.)');
+      return;
+    }
+    const cfg = await settingsDb.setAutoSyncConfig({ quoteAsset: quote });
+    eventsDb.recordAudit(`auto-sync: quote asset set to ${quote}`).catch(() => {});
+    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  if (sub === 'limit') {
+    const add = Number(args[1]);
+    const remove = Number(args[2] ?? args[1]);
+    if (!Number.isFinite(add) || add < 0 || !Number.isFinite(remove) || remove < 0) {
+      await ctx.reply('Usage: /autosync limit ADD_PER_RUN [REMOVE_PER_RUN] \u2014 e.g. /autosync limit 5 5');
+      return;
+    }
+    const cfg = await settingsDb.setAutoSyncConfig({ maxNewPerRun: add, maxRemovePerRun: remove });
+    eventsDb.recordAudit(`auto-sync: limits set to +${add}/-${remove} per run`).catch(() => {});
+    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  if (sub === 'interval') {
+    const hours = Number(args[1]);
+    if (!Number.isFinite(hours) || hours < 1) {
+      await ctx.reply('Usage: /autosync interval HOURS \u2014 e.g. /autosync interval 24');
+      return;
+    }
+    const cfg = await settingsDb.setAutoSyncConfig({ intervalHours: hours });
+    eventsDb.recordAudit(`auto-sync: interval set to ${hours}h`).catch(() => {});
+    await ctx.reply(autoSyncStatusText(cfg), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  await ctx.reply(
+    'Usage: /autosync [on|off|status|quote ASSET|limit ADD REMOVE|interval HOURS]'
+  );
+}
+
+// Runs a sync pass immediately regardless of the on/off toggle — lets the
+// admin see (and get) results right away instead of waiting for the next
+// periodic check. Still respects the configured per-run caps, so this
+// won't dump hundreds of coins in one go even on a first run against a
+// long-untouched list.
+async function syncNowCmd(ctx) {
+  await ctx.reply('Checking Binance\u2019s current spot list against what\u2019s tracked...');
+  // manual: true — results go straight back to this chat below, so
+  // runSync never needs the bot object to DM the admin separately.
+  const result = await coinSync.runSync(null, { manual: true });
+
+  if (!result.ok) {
+    await ctx.reply(`Sync failed: ${result.error}`);
+    return;
+  }
+
+  const lines = [];
+  if (result.added.length) lines.push(`\u2795 Added: ${result.added.join(', ')}`);
+  if (result.removed.length) lines.push(`\u2796 Removed (no longer trading on Binance): ${result.removed.join(', ')}`);
+  if (result.failures.length) lines.push(`\u26A0\uFE0F Failed: ${result.failures.join('; ')}`);
+  if (!lines.length) lines.push('No changes \u2014 tracked list already matches Binance.');
+  if (result.remainingAddCandidates > 0) {
+    lines.push(
+      `${result.remainingAddCandidates} more new-on-Binance coin(s) available but past this run's cap \u2014 raise it with /autosync limit, or run /syncnow again.`
+    );
+  }
+
+  await ctx.reply(lines.join('\n'));
+}
+
+async function autoSyncLogCmd(ctx) {
+  const rows = await autoSyncLogDb.recent(10);
+  if (!rows.length) {
+    await ctx.reply('No auto-sync runs yet. /syncnow to run one now.');
+    return;
+  }
+  const lines = rows.map((r) => {
+    const when = new Date(r.run_at).toLocaleString('en-US', { timeZone: 'UTC' }) + ' UTC';
+    if (r.error) return `${when} \u2014 error: ${r.error}`;
+    const parts = [];
+    if (r.added) parts.push(`+${r.added}`);
+    if (r.removed) parts.push(`-${r.removed}`);
+    return `${when} \u2014 ${parts.length ? parts.join(' ') : 'no changes'}`;
+  });
+  await ctx.reply(`Recent auto-sync runs:\n${lines.join('\n')}`);
+}
+
 async function removeCoinCmd(ctx) {
   const raw = ctx.message.text.replace(/^\/removecoin(@\w+)?\s*/, '');
   const symbols = raw
@@ -3299,6 +3431,9 @@ module.exports = {
   addCoinConfirmExecute,
   addCoinCancel,
   coinListScreen,
+  autoSyncCmd,
+  syncNowCmd,
+  autoSyncLogCmd,
   removeCoinCmd,
   removeCoinPick,
   removeCoinConfirmExecute,
