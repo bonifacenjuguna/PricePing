@@ -168,4 +168,4 @@ async function removeAllCustomCoins() {
   return customSymbols;
 }
 
-module.exports = { loadCustomCoins, addCoin, removeCoin, removeAllCustomCoins };
+module.exports = { loadCustomCoins, addCoin, removeCoin, removeAllCustomCoins, BUILT_IN_SYMBOLS };

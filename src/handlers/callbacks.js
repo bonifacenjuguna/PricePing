@@ -462,6 +462,7 @@ async function onCallback(ctx) {
         return commands.bulkPickScope(ctx, scopeArg);
       }
       if (a1 === 'mutedur') return commands.bulkPickMuteDuration(ctx, a2);
+      if (a1 === 'deleteconfirm') return commands.bulkDeleteExecute(ctx);
       if (a1 === 'cancel') return commands.bulkCancel(ctx);
       return undefined;
     }

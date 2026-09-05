@@ -568,9 +568,17 @@ function tagAddCoinPicker() {
 }
 
 // ---------- Bulk actions ----------
+const BULK_ACTION_LABELS = {
+  threshold: 'Set threshold',
+  mute: 'Mute',
+  unmute: 'Unmute',
+  delete: 'Delete',
+  addlabel: 'Add label',
+  removelabel: 'Remove label',
+};
 function bulkWizardSummary(s) {
   const bits = [];
-  if (s.actionType) bits.push(`Action: ${s.actionType === 'threshold' ? 'Set threshold' : 'Mute'}`);
+  if (s.actionType) bits.push(`Action: ${BULK_ACTION_LABELS[s.actionType] || s.actionType}`);
   if (s.scope) bits.push(`Scope: ${s.scope === 'all' ? 'all coins' : `#${s.scope.tag}`}`);
   return bits.join(' \u00B7 ');
 }
@@ -579,7 +587,15 @@ function bulkWizardAction() {
   const text = 'Bulk actions \u2014 what do you want to apply to a group of coins at once?';
   const keyboard = [
     [{ text: '\uD83C\uDFAF Set threshold', callback_data: 'bulk:act:threshold' }],
-    [{ text: '\uD83D\uDD07 Mute', callback_data: 'bulk:act:mute' }],
+    [
+      { text: '\uD83D\uDD07 Mute', callback_data: 'bulk:act:mute' },
+      { text: '\uD83D\uDD14 Unmute', callback_data: 'bulk:act:unmute' },
+    ],
+    [
+      { text: '\uD83C\uDFF7 Add label', callback_data: 'bulk:act:addlabel' },
+      { text: '\uD83C\uDFF7 Remove label', callback_data: 'bulk:act:removelabel' },
+    ],
+    [{ text: '\uD83D\uDDD1 Delete coins', callback_data: 'bulk:act:delete' }],
     ...footer('nav:automation'),
   ];
   return { text, keyboard };
@@ -599,6 +615,26 @@ function bulkWizardScope(s, tags) {
 function bulkWizardMuteDuration(s) {
   const text = `${bulkWizardSummary(s)}\n\nMute for how long?`;
   return { text, keyboard: durationPicker('bulk:mutedur', [backRow('nav:automation')]) };
+}
+
+// Delete is destructive and irreversible (unlike mute/threshold, which can
+// always be changed back), so it gets its own explicit confirm step with
+// the exact symbol list shown, rather than firing straight after scope
+// selection like the other bulk actions.
+function bulkWizardDeleteConfirm(s, targets, builtInCount) {
+  const text =
+    `${bulkWizardSummary(s)}\n\n` +
+    `This deletes ${targets.length} coin(s): ${targets.join(', ') || 'none'}.\n` +
+    (builtInCount ? `(${builtInCount} of the matched coins are original coins and can't be deleted \u2014 they're skipped.)\n` : '') +
+    `This can't be undone. Confirm?`;
+  const keyboard = [
+    [
+      { text: '\u2705 Yes, delete', callback_data: 'bulk:deleteconfirm' },
+      { text: '\u274C Cancel', callback_data: 'bulk:cancel' },
+    ],
+    ...footer('nav:automation'),
+  ];
+  return { text, keyboard };
 }
 
 function moversChannelPicker(tagArg, channels) {

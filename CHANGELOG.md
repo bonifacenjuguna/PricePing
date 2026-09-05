@@ -3,6 +3,25 @@
 All notable changes to PricePing are logged here. Dates are approximate
 (this project doesn't tag releases with real calendar dates).
 
+## v0.12.0 — Bulk actions expanded
+
+**Added**
+- Bulk actions (Automation \u2192 Bulk actions) now cover five actions
+  instead of two: **Set threshold**, **Mute**, **Unmute**, **Delete**,
+  **Add label**, **Remove label** \u2014 each against "all coins" or a
+  chosen label, same as before.
+- **Bulk delete** gets its own confirm step showing the exact symbol
+  list before anything happens (unlike the other bulk actions, which
+  apply immediately after scope is picked) \u2014 it's the one
+  irreversible action in the set. Original coins are automatically
+  skipped and called out rather than blocking the rest of the batch.
+- **Bulk unmute** and the two label actions apply immediately, same
+  pattern as bulk mute/threshold already did.
+
+**Migration note:** none \u2014 no schema changes this release.
+
+---
+
 ## v0.11.0 — Bot Modes, live limits, full factory reset
 
 **Added**

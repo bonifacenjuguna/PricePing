@@ -90,7 +90,7 @@ async function help(ctx) {
       `/setcaption TYPE[:SYMBOL] <template> \u00B7 /previewcaption TYPE[:SYMBOL] \u00B7 /resetcaption TYPE[:SYMBOL]\n` +
       `/variables \u2014 list caption variables \u00B7 /setvar name value \u00B7 /delvar name\n` +
       `/schedule <line> \u00B7 /schedules \u00B7 /addrule <line> \u00B7 /rules \u2014 or build a rule with buttons via /commands \u2192 Automation \u2192 Rules \u2192 Add rule\n` +
-      `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk threshold/mute via /commands \u2192 Automation \u2192 Bulk actions\n` +
+      `/movers [tag:NAME] \u00B7 /tag SYMBOL TAG \u00B7 /untag SYMBOL TAG \u00B7 /tags \u00B7 bulk actions (threshold/mute/unmute/delete/label) via Automation \u2192 Bulk actions\n` +
       `/broadcast CHANNEL message... \u2014 plain text with HTML formatting/links, or /broadcast CHANNEL alone then send any media (photo/video/document/etc.) to post it as-is, no "Forwarded from" tag\n` +
       `/exportconfig \u00B7 /importconfig\n` +
       `/reset [thresholds|milestones|cooldowns|captions|vars|channels|automation|everything]\n` +
@@ -3050,13 +3050,97 @@ async function bulkPickScope(ctx, scopeArg) {
   const s = wizardState.update('bulk', { scope });
   if (!s) return bulkWizardExpired(ctx);
   await ctx.answerCbQuery();
+
   if (s.actionType === 'mute') {
     await inlineEdit(ctx, menu.bulkWizardMuteDuration(s));
     return;
   }
+  if (s.actionType === 'unmute') {
+    await bulkExecuteUnmute(ctx, s);
+    return;
+  }
+  if (s.actionType === 'delete') {
+    const targets = await resolveBulkTargets(s.scope);
+    const deletable = targets.filter((sym) => !coinRegistry.BUILT_IN_SYMBOLS.has(sym));
+    const builtInCount = targets.length - deletable.length;
+    wizardState.update('bulk', { pendingTargets: deletable });
+    await inlineEdit(ctx, menu.bulkWizardDeleteConfirm(s, deletable, builtInCount));
+    return;
+  }
+  if (s.actionType === 'addlabel' || s.actionType === 'removelabel') {
+    const verb = s.actionType === 'addlabel' ? 'add to' : 'remove from';
+    const prompt = `Send the label to ${verb} ${scopeLabel(s.scope)} (one word, e.g. defi).`;
+    pendingInput.set('bulkwiz_label', {}, prompt);
+    await ctx.reply(`${menu.bulkWizardSummary(s)}\n\n${prompt}`);
+    return;
+  }
+
   const prompt = `Send the threshold value to apply to ${scopeLabel(s.scope)} (e.g. 400 or 2%).`;
   pendingInput.set('bulkwiz_threshold', {}, prompt);
   await ctx.reply(`${menu.bulkWizardSummary(s)}\n\n${prompt}`);
+}
+async function bulkExecuteUnmute(ctx, s) {
+  const targets = await resolveBulkTargets(s.scope);
+  for (const symbol of targets) {
+    // eslint-disable-next-line no-await-in-loop
+    await coinStateDb.clearMute(symbol);
+  }
+  wizardState.clear();
+  await ctx.reply(
+    targets.length
+      ? `Unmuted ${targets.length} coin(s): ${targets.join(', ')}.`
+      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
+  );
+}
+async function bulkDeleteExecute(ctx) {
+  const s = wizardState.get('bulk');
+  if (!s) return bulkWizardExpired(ctx);
+  await ctx.answerCbQuery('Deleting...');
+  const targets = s.pendingTargets || [];
+  const removed = [];
+  const failed = [];
+  for (const symbol of targets) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await coinRegistry.removeCoin(symbol);
+      removed.push(symbol);
+    } catch (err) {
+      failed.push(`${symbol}: ${err.message}`);
+    }
+  }
+  wizardState.clear();
+  eventsDb.recordAudit(`bulk delete: ${removed.join(', ') || 'none'}`).catch(() => {});
+  const lines = [];
+  lines.push(removed.length ? `Deleted ${removed.length} coin(s): ${removed.join(', ')}.` : 'No coins were deleted.');
+  if (failed.length) lines.push(`Failed: ${failed.join('; ')}`);
+  await ctx.reply(lines.join('\n'));
+}
+async function bulkResumeAfterLabelText(ctx, text) {
+  const s = wizardState.get('bulk');
+  if (!s) {
+    await ctx.reply('That flow expired \u2014 open Automation \u2192 Bulk actions to start again.');
+    return;
+  }
+  const label = text.trim().toLowerCase().replace(/^#/, '');
+  if (!label) {
+    await ctx.reply('That doesn\u2019t look like a label \u2014 try again, or /cancel.');
+    return;
+  }
+  const targets = await resolveBulkTargets(s.scope);
+  for (const symbol of targets) {
+    // eslint-disable-next-line no-await-in-loop
+    if (s.actionType === 'addlabel') await coinTagsDb.add(symbol, label);
+    // eslint-disable-next-line no-await-in-loop
+    else await coinTagsDb.remove(symbol, label);
+  }
+  wizardState.clear();
+  const verb = s.actionType === 'addlabel' ? 'Added' : 'Removed';
+  const prep = s.actionType === 'addlabel' ? 'to' : 'from';
+  await ctx.reply(
+    targets.length
+      ? `${verb} label #${label} ${prep} ${targets.length} coin(s): ${targets.join(', ')}.`
+      : `No coins matched ${scopeLabel(s.scope)} \u2014 nothing changed.`
+  );
 }
 async function bulkWizardExpired(ctx) {
   await ctx.answerCbQuery('That flow expired \u2014 start again with Bulk actions.');
@@ -3456,6 +3540,7 @@ async function handleGuidedInput(ctx, pending) {
   if (pending.action === 'rulewiz_broadcast') return ruleWizardResumeAfterBroadcastText(ctx, text);
   if (pending.action === 'addtag') return runAddTag(ctx, pending.context.symbol, text);
   if (pending.action === 'bulkwiz_threshold') return bulkResumeAfterThresholdText(ctx, text);
+  if (pending.action === 'bulkwiz_label') return bulkResumeAfterLabelText(ctx, text);
   if (pending.action === 'coinselect_threshold') return coinSelectResumeAfterThresholdText(ctx, text);
   if (pending.action === 'settimezone') return runSetTimezone(ctx, text);
   if (pending.action === 'broadcastcopy') return runBroadcastCopy(ctx, pending.context.channelName);
@@ -3650,6 +3735,7 @@ module.exports = {
   bulkPickAction,
   bulkPickScope,
   bulkPickMuteDuration,
+  bulkDeleteExecute,
   bulkCancel,
   ruleCmd,
   ruleDel,
