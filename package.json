@@ -1,13 +1,12 @@
 {
   "name": "priceping",
-  "version": "0.12.1",
-  "description": "Telegram crypto price-alert bot for @PricePing",
+  "version": "1.0.0",
+  "description": "Telegram crypto price-alert bot for @PricePing — Binance auto-sync, multi-channel, mode-scaled automation",
   "main": "src/bot.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/bot.js",
-    "migrate": "node scripts/migrate.js",
-    "prepare-assets": "node scripts/prepare-assets.js"
+    "migrate": "node scripts/migrate.js"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -1,94 +1,90 @@
 const { pool } = require('./pool');
 
+// `channels` table already existed (name, chat_id, is_default) — extended
+// with `channel_post_types` (new in v1.0.0) for the per-channel per-post-
+// type opt-out. Every post type defaults to enabled for a brand-new
+// channel (see addChannel below) — an owner opts a channel OUT of noise,
+// rather than having to opt every channel IN to everything.
+
+const POST_TYPES = ['threshold', 'milestone', 'manual', 'chart', 'movers', 'feargreed', 'digest'];
+
 async function getAll() {
-  const { rows } = await pool.query('SELECT name, chat_id, is_default FROM channels ORDER BY added_at ASC');
-  return rows.map((r) => ({ name: r.name, chatId: r.chat_id, isDefault: r.is_default }));
+  const res = await pool.query('SELECT * FROM channels ORDER BY is_default DESC, name ASC');
+  return res.rows;
+}
+
+async function getPrimary() {
+  const res = await pool.query('SELECT * FROM channels WHERE is_default = true LIMIT 1');
+  return res.rows[0] || null;
 }
 
 async function get(name) {
-  const { rows } = await pool.query('SELECT name, chat_id, is_default FROM channels WHERE name = $1', [name]);
-  if (!rows.length) return null;
-  return { name: rows[0].name, chatId: rows[0].chat_id, isDefault: rows[0].is_default };
+  const res = await pool.query('SELECT * FROM channels WHERE name = $1', [name]);
+  return res.rows[0] || null;
 }
 
-async function getDefault() {
-  const { rows } = await pool.query('SELECT name, chat_id, is_default FROM channels WHERE is_default = true LIMIT 1');
-  if (!rows.length) return null;
-  return { name: rows[0].name, chatId: rows[0].chat_id, isDefault: true };
-}
-
-async function add(name, chatId) {
+async function addChannel(name, chatId) {
   await pool.query(
     `INSERT INTO channels (name, chat_id, is_default) VALUES ($1, $2, false)
-     ON CONFLICT (name) DO UPDATE SET chat_id = $2`,
+     ON CONFLICT (name) DO UPDATE SET chat_id = EXCLUDED.chat_id`,
     [name, chatId]
   );
+  for (const postType of POST_TYPES) {
+    await pool.query(
+      `INSERT INTO channel_post_types (channel_name, post_type, enabled) VALUES ($1, $2, true)
+       ON CONFLICT (channel_name, post_type) DO NOTHING`,
+      [name, postType]
+    );
+  }
 }
 
-async function remove(name) {
+// The primary channel (is_default = true) can never be removed via this —
+// callers must check isDefault before offering the button at all.
+async function removeChannel(name) {
+  const channel = await get(name);
+  if (channel && channel.is_default) {
+    throw new Error('The primary channel cannot be removed.');
+  }
+  await pool.query('DELETE FROM channel_post_types WHERE channel_name = $1', [name]);
   await pool.query('DELETE FROM channels WHERE name = $1', [name]);
 }
 
-// Only one channel may be default at a time — used as the implicit target
-// for automatic threshold/milestone alerts and for any command where no
-// channel is specified.
-async function setDefault(name) {
-  await pool.query('UPDATE channels SET is_default = false');
-  await pool.query('UPDATE channels SET is_default = true WHERE name = $1', [name]);
-}
-
-// Resolves a channel by name, or the default channel if name is falsy.
-// Returns null if nothing matches (caller should treat that as "tell the
-// admin no such channel / no default configured").
-async function resolve(name) {
-  if (name) return get(name);
-  return getDefault();
-}
-
-// Per-alert-type default (e.g. milestones -> one channel, everything else
-// -> another). Falls back to the overall default if no type-specific one
-// is set. alertType: 'threshold' | 'milestone' | 'manual' | 'chart' | 'digest'.
-async function resolveForType(alertType) {
-  const { rows } = await pool.query(
-    `SELECT c.name, c.chat_id, c.is_default
-     FROM default_channels_by_type d
-     JOIN channels c ON c.name = d.channel_name
-     WHERE d.alert_type = $1`,
-    [alertType]
-  );
-  if (rows.length) return { name: rows[0].name, chatId: rows[0].chat_id, isDefault: rows[0].is_default };
-  return getDefault();
-}
-
-async function getDefaultsByType() {
-  const { rows } = await pool.query('SELECT alert_type, channel_name FROM default_channels_by_type');
+async function getPostTypeToggles(name) {
+  const res = await pool.query('SELECT post_type, enabled FROM channel_post_types WHERE channel_name = $1', [name]);
   const map = {};
-  for (const row of rows) map[row.alert_type] = row.channel_name;
+  for (const t of POST_TYPES) map[t] = true; // default on if row missing (e.g. primary channel, seeded at migration time)
+  for (const row of res.rows) map[row.post_type] = row.enabled;
   return map;
 }
 
-async function setDefaultForType(alertType, channelName) {
+async function setPostTypeEnabled(name, postType, enabled) {
   await pool.query(
-    `INSERT INTO default_channels_by_type (alert_type, channel_name) VALUES ($1, $2)
-     ON CONFLICT (alert_type) DO UPDATE SET channel_name = $2`,
-    [alertType, channelName]
+    `INSERT INTO channel_post_types (channel_name, post_type, enabled) VALUES ($1, $2, $3)
+     ON CONFLICT (channel_name, post_type) DO UPDATE SET enabled = EXCLUDED.enabled`,
+    [name, postType, enabled]
   );
 }
 
-async function clearDefaultForType(alertType) {
-  await pool.query('DELETE FROM default_channels_by_type WHERE alert_type = $1', [alertType]);
+// Channels that currently have a given post type enabled — what
+// telegramSender.js actually broadcasts to for that post.
+async function getChannelsForPostType(postType) {
+  const all = await getAll();
+  const out = [];
+  for (const channel of all) {
+    const toggles = await getPostTypeToggles(channel.name);
+    if (toggles[postType]) out.push(channel);
+  }
+  return out;
 }
 
 module.exports = {
+  POST_TYPES,
   getAll,
+  getPrimary,
   get,
-  getDefault,
-  add,
-  remove,
-  setDefault,
-  resolve,
-  resolveForType,
-  getDefaultsByType,
-  setDefaultForType,
-  clearDefaultForType,
+  addChannel,
+  removeChannel,
+  getPostTypeToggles,
+  setPostTypeEnabled,
+  getChannelsForPostType,
 };

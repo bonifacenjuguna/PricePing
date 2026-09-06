@@ -1,36 +1,21 @@
-// Tiny in-memory "what free-text input is the admin about to send" state
-// machine. Single-admin, single-process bot, so a module-level variable is
-// sufficient — this deliberately does NOT need to survive a restart (if
-// the process restarts mid-flow, the admin just taps the button again).
-//
-// Used for the handful of things buttons genuinely can't capture (a hex
-// color, a chat ID, a caption template, a free-form broadcast message): a
-// button sets a pending action + short help text, text.js checks this
-// before anything else, and whatever comes back is routed to the matching
-// handler in commands.js, then cleared either way.
-let pending = null;
+const { redis } = require('../db/redis');
 
-const TIMEOUT_MS = 5 * 60 * 1000;
+const KEY = 'priceping:pendinginput';
+const TTL_SECONDS = 15 * 60; // 15 min — stale free-text states auto-expire rather than lingering forever
 
-// action: string key, e.g. 'addcoin', 'setcaption', 'broadcast'
-// context: anything the handler needs alongside the text, e.g. { alertType: 'threshold' }
-// prompt: the text shown to the admin explaining what to send
-function set(action, context, prompt) {
-  pending = { action, context: context || {}, prompt, setAt: Date.now() };
-  return pending;
+// action: a string like 'threshold:override:BTC', 'channel:add',
+// 'format:setnew:threshold', 'timezone:set', 'post:search'. Whatever
+// handler set it is responsible for interpreting it when the reply lands.
+async function set(action) {
+  await redis.set(KEY, action, 'EX', TTL_SECONDS);
 }
 
-function get() {
-  if (!pending) return null;
-  if (Date.now() - pending.setAt > TIMEOUT_MS) {
-    pending = null;
-    return null;
-  }
-  return pending;
+async function get() {
+  return redis.get(KEY);
 }
 
-function clear() {
-  pending = null;
+async function clear() {
+  await redis.del(KEY);
 }
 
 module.exports = { set, get, clear };
