@@ -11,14 +11,19 @@ async function handleStart(ctx) {
   const channels = await channelsDb.getAll();
   const mode = await modes.getCurrentMode();
 
+  // Two separate sends on purpose — Telegram allows only one reply_markup
+  // per message, so an inline keyboard and the persistent BBTB row can't
+  // both be attached to the same message. First message sets the BBTB row
+  // (and carries the status summary); second message is the actual
+  // navigable inline menu.
   await ctx.reply(
     `◆ <b>PricePing</b>\n\n` +
       `▸ Tracking ${coins.length} coins\n` +
       `▸ Mode: ${mode.label}\n` +
-      `▸ Bound to ${channels.length} channel(s)\n\n` +
-      `Tap a button below to get started.`,
-    { parse_mode: 'HTML', ...inline.mainMenu, ...bbtb.mainMenu }
+      `▸ Bound to ${channels.length} channel(s)`,
+    { parse_mode: 'HTML', ...bbtb.mainMenu }
   );
+  await ctx.reply('Tap a button below to get started.', { ...inline.mainMenu });
 }
 
 // Called once at boot. DM to the owner is detailed (version/mode/DB

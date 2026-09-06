@@ -12,8 +12,24 @@ const { resolveLogoSvg } = require('../utils/logoFetch');
 // needs real detail at that scale, not an upscaled low-res image.
 const LOGO_SIZE = 512;
 
-const EXCHANGE_INFO_URL = 'https://api.binance.com/api/v3/exchangeInfo';
-const TICKER_24H_URL = 'https://api.binance.com/api/v3/ticker/24hr';
+// Binance's edge sometimes geo-blocks or rate-limits a specific host —
+// tries each mirror in order rather than failing outright on the first one.
+const API_HOSTS = ['https://api.binance.com', 'https://api1.binance.com', 'https://api2.binance.com', 'https://api3.binance.com', 'https://data-api.binance.vision'];
+
+async function fetchWithMirrors(pathAndQuery) {
+  let lastErr;
+  for (const host of API_HOSTS) {
+    try {
+      const res = await fetch(`${host}${pathAndQuery}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} from ${host}`);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      logger.warn(`Binance host ${host} failed, trying next mirror`, { message: err.message });
+    }
+  }
+  throw lastErr;
+}
 
 const KNOWN_STABLES = new Set(['USDT', 'USDC', 'FDUSD', 'TUSD', 'DAI', 'USDP', 'PYUSD', 'EUR', 'EURI']);
 
@@ -84,12 +100,10 @@ function removeLogoFromDisk(symbol) {
 // and removes ones no longer listed. Returns a diff summary for the
 // "🔄 Force Sync Now" button and boot logs.
 async function runSync() {
-  const [exchangeRes, tickerRes] = await Promise.all([fetch(EXCHANGE_INFO_URL), fetch(TICKER_24H_URL)]);
-  if (!exchangeRes.ok) throw new Error(`Binance exchangeInfo HTTP ${exchangeRes.status}`);
-  if (!tickerRes.ok) throw new Error(`Binance ticker/24hr HTTP ${tickerRes.status}`);
-
-  const exchangeInfo = await exchangeRes.json();
-  const tickers = await tickerRes.json();
+  const [exchangeInfo, tickers] = await Promise.all([
+    fetchWithMirrors('/api/v3/exchangeInfo'),
+    fetchWithMirrors('/api/v3/ticker/24hr'),
+  ]);
   const tickerByPair = new Map(tickers.map((t) => [t.symbol, t]));
 
   const quote = config.binanceQuoteAsset;
@@ -171,7 +185,13 @@ async function runSync() {
 
 let syncTimer = null;
 function startSyncSchedule() {
-  runSync().catch((err) => logger.warn('Initial Binance sync failed', { message: err.message }));
+  runSync().catch((err) => {
+    logger.warn('Initial Binance sync failed', { message: err.message });
+    // eslint-disable-next-line global-require
+    require('./telegramSender').notifyOwner(
+      `⚠️ <b>Binance sync failed on boot</b>\n\n${err.message}\n\nThis usually means Railway's region is being rate-limited or geo-blocked by Binance. Tracked coins will stay at 0 until a sync succeeds — try 📡 Watching → 🔄 Force Sync Now once the bot is up.`
+    );
+  });
   syncTimer = setInterval(() => {
     runSync().catch((err) => logger.warn('Scheduled Binance sync failed', { message: err.message }));
   }, config.binanceSyncIntervalMs);

@@ -12,10 +12,25 @@ async function handleCancel(ctx) {
   await ctx.reply('Cancelled.', bbtb.mainMenu);
 }
 
+// BBTB shortcuts arrive as plain text (Telegram reply keyboards send the
+// button's label as a normal message) — routed here to the same screens
+// their inline-menu equivalents show, just via a fresh ctx.reply instead
+// of an edit (see utils/renderScreen.js).
+const BBTB_SHORTCUTS = {
+  '⬆️ Back to Menu': () => require('./callbacks').showMainMenu,
+  '⚡ Mode': () => require('./automation').showModePicker,
+  '📈 Post': () => (ctx) => require('./manualPost').showCoinList(ctx, 1),
+  '📊 Status': () => require('./botSettings').showStatus,
+};
+
 async function handleText(ctx) {
   const text = ctx.message.text.trim();
 
   if (text === '❌ Cancel') return handleCancel(ctx);
+
+  if (BBTB_SHORTCUTS[text]) {
+    return BBTB_SHORTCUTS[text]()(ctx);
+  }
 
   const action = await pendingInput.get();
   if (!action) return; // no pending input expected — ignore stray text, keeps the bot silent to noise

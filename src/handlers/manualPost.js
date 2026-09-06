@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const bbtb = require('../keyboards/bbtb');
 const coinsDb = require('../db/coins');
@@ -24,7 +25,7 @@ async function showCoinList(ctx, page = 1) {
   const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
   const clampedPage = Math.min(Math.max(1, page), totalPages);
   const slice = all.slice((clampedPage - 1) * PAGE_SIZE, clampedPage * PAGE_SIZE);
-  await ctx.editMessageText(`📈 <b>Manual Post</b>\n\nPick a coin — page ${clampedPage}/${totalPages}`, {
+  await renderScreen(ctx, `📈 <b>Manual Post</b>\n\nPick a coin — page ${clampedPage}/${totalPages}`, {
     parse_mode: 'HTML',
     ...inline.manualPostCoinList(slice, clampedPage, totalPages),
   });
@@ -39,15 +40,15 @@ async function promptSearch(ctx) {
 async function showTypeChoice(ctx, symbol) {
   const coin = await coinsDb.get(symbol);
   if (!coin) return ctx.answerCbQuery('Coin not tracked.');
-  await ctx.editMessageText(`<b>${symbol}</b> — post as what?`, { parse_mode: 'HTML', ...inline.manualPostTypeChoice(symbol) });
+  await renderScreen(ctx, `<b>${symbol}</b> — post as what?`, { parse_mode: 'HTML', ...inline.manualPostTypeChoice(symbol) });
 }
 
 async function showChartStyle(ctx, symbol) {
-  await ctx.editMessageText(`<b>${symbol}</b> chart style?`, { parse_mode: 'HTML', ...inline.manualPostChartStyle(symbol) });
+  await renderScreen(ctx, `<b>${symbol}</b> chart style?`, { parse_mode: 'HTML', ...inline.manualPostChartStyle(symbol) });
 }
 
 async function showChartPeriod(ctx, chartStyle, symbol) {
-  await ctx.editMessageText(`<b>${symbol}</b> — time period?`, {
+  await renderScreen(ctx, `<b>${symbol}</b> — time period?`, {
     parse_mode: 'HTML',
     ...inline.manualPostChartPeriod(symbol, chartStyle),
   });
@@ -55,7 +56,7 @@ async function showChartPeriod(ctx, chartStyle, symbol) {
 
 async function showChannelChoiceForCard(ctx, symbol) {
   const channels = await channelsDb.getAll();
-  await ctx.editMessageText(`Send <b>${symbol}</b> price card to which channel?`, {
+  await renderScreen(ctx, `Send <b>${symbol}</b> price card to which channel?`, {
     parse_mode: 'HTML',
     ...inline.manualPostChannelChoice(`card:${symbol}`, channels),
   });
@@ -63,7 +64,7 @@ async function showChannelChoiceForCard(ctx, symbol) {
 
 async function showChannelChoiceForChart(ctx, chartStyle, period, symbol) {
   const channels = await channelsDb.getAll();
-  await ctx.editMessageText(`Send <b>${symbol}</b> ${chartStyle} chart (${PERIOD_LABELS[period]}) to which channel?`, {
+  await renderScreen(ctx, `Send <b>${symbol}</b> ${chartStyle} chart (${PERIOD_LABELS[period]}) to which channel?`, {
     parse_mode: 'HTML',
     ...inline.manualPostChannelChoice(`chart:${chartStyle}:${period}:${symbol}`, channels),
   });

@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const bbtb = require('../keyboards/bbtb');
 const watching = require('./watching');
@@ -7,7 +8,7 @@ const botSettings = require('./botSettings');
 const manualPost = require('./manualPost');
 
 async function showMainMenu(ctx) {
-  await ctx.editMessageText('◆ <b>PricePing</b> — main menu', { parse_mode: 'HTML', ...inline.mainMenu });
+  await renderScreen(ctx, '◆ <b>PricePing</b> — main menu', { parse_mode: 'HTML', ...inline.mainMenu });
 }
 
 function register(bot) {
@@ -80,4 +81,4 @@ function register(bot) {
   bot.action(/^post:send:(.+):(.+)$/, (ctx) => manualPost.executeSend(ctx, ctx.match[1], ctx.match[2]));
 }
 
-module.exports = { register };
+module.exports = { register, showMainMenu };

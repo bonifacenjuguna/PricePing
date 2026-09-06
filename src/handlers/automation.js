@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const bbtb = require('../keyboards/bbtb');
 const config = require('../config');
@@ -7,14 +8,14 @@ const pendingInput = require('../services/pendingInput');
 const automationScheduler = require('../services/automationScheduler');
 
 async function showHub(ctx) {
-  await ctx.editMessageText('🤖 <b>Automation</b>\n\nScheduled posts and how Bot Mode scales them.', {
+  await renderScreen(ctx, '🤖 <b>Automation</b>\n\nScheduled posts and how Bot Mode scales them.', {
     parse_mode: 'HTML',
     ...inline.automationHub,
   });
 }
 
 async function showScheduledMenu(ctx) {
-  await ctx.editMessageText('📊 <b>Scheduled Posts</b>\n\nPick a type to view its cadence.', {
+  await renderScreen(ctx, '📊 <b>Scheduled Posts</b>\n\nPick a type to view its cadence.', {
     parse_mode: 'HTML',
     ...inline.scheduledPostsMenu,
   });
@@ -42,19 +43,19 @@ async function showScheduledDetail(ctx, kind) {
   let text = `<b>${labels[kind]}</b>\n\nBase interval: ${hoursLabel(base)}\nCurrent mode (${mode.label}): every ${hoursLabel(effective)}`;
   if (skipped) text += '\n\n⛔ Skipped entirely in Anti-Spam mode.';
 
-  await ctx.editMessageText(text, { parse_mode: 'HTML', ...inline.scheduledPostsMenu });
+  await renderScreen(ctx, text, { parse_mode: 'HTML', ...inline.scheduledPostsMenu });
 }
 
 async function showDigestsMenu(ctx) {
   const hour = (await settingsDb.get('digest_hour')) || config.digestHourUtc;
-  await ctx.editMessageText(
+  await renderScreen(ctx, 
     `📅 <b>Digests</b>\n\nDaily digest fires at ${hour}:00 (your configured timezone).\nWeekly digest fires Mondays at the same time.`,
     { parse_mode: 'HTML', ...inline.digestsMenu }
   );
 }
 
 async function showDigestDetail(ctx, kind) {
-  await ctx.editMessageText(`${kind === 'daily' ? '📅 Daily' : '📅 Weekly'} digest is controlled by the shared digest hour setting.`, {
+  await renderScreen(ctx, `${kind === 'daily' ? '📅 Daily' : '📅 Weekly'} digest is controlled by the shared digest hour setting.`, {
     parse_mode: 'HTML',
     ...inline.digestsMenu,
   });
@@ -68,7 +69,7 @@ async function previewDigest(ctx) {
 
 async function showModePicker(ctx) {
   const kb = await inline.modePicker();
-  await ctx.editMessageText('⚡ <b>Mode</b>\n\nPick one — it applies instantly.', { parse_mode: 'HTML', ...kb });
+  await renderScreen(ctx, '⚡ <b>Mode</b>\n\nPick one — it applies instantly.', { parse_mode: 'HTML', ...kb });
 }
 
 async function setMode(ctx, key) {
@@ -82,7 +83,7 @@ async function showModeDetails(ctx) {
     const m = modes.MODE_DEFS[key];
     return `${m.label} — ${m.description}`;
   });
-  await ctx.editMessageText(`⚡ <b>Mode Details</b>\n\n${lines.join('\n')}`, {
+  await renderScreen(ctx, `⚡ <b>Mode Details</b>\n\n${lines.join('\n')}`, {
     parse_mode: 'HTML',
     ...inline.modeDetailsBack,
   });

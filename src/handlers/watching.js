@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const coinsDb = require('../db/coins');
 const settingsDb = require('../db/settings');
@@ -9,7 +10,7 @@ const config = require('../config');
 const PAGE_SIZE = 8;
 
 async function showHub(ctx) {
-  await ctx.editMessageText('📡 <b>Watching</b>\n\nWhat is being tracked, and how sensitive alerts are.', {
+  await renderScreen(ctx, '📡 <b>Watching</b>\n\nWhat is being tracked, and how sensitive alerts are.', {
     parse_mode: 'HTML',
     ...inline.watchingHub,
   });
@@ -21,7 +22,7 @@ async function showCoinList(ctx, page) {
   const clampedPage = Math.min(Math.max(1, page), totalPages);
   const slice = all.slice((clampedPage - 1) * PAGE_SIZE, clampedPage * PAGE_SIZE);
 
-  await ctx.editMessageText(`🪙 <b>Tracked Coins</b> (${all.length} total) — page ${clampedPage}/${totalPages}`, {
+  await renderScreen(ctx, `🪙 <b>Tracked Coins</b> (${all.length} total) — page ${clampedPage}/${totalPages}`, {
     parse_mode: 'HTML',
     ...inline.coinList(slice, clampedPage, totalPages),
   });
@@ -36,7 +37,7 @@ async function showCoinDetail(ctx, symbol) {
     `Threshold: ${coin.threshold_value}${coin.threshold_type === 'pct' ? '%' : ' USD'}\n` +
     `Last price: ${coin.last_price ? `$${coin.last_price}` : '—'}\n` +
     `Status: ${coin.muted ? '🔕 Muted' : '🔔 Active'}`;
-  await ctx.editMessageText(text, { parse_mode: 'HTML', ...inline.coinDetail(coin) });
+  await renderScreen(ctx, text, { parse_mode: 'HTML', ...inline.coinDetail(coin) });
 }
 
 async function promptThresholdOverride(ctx, symbol) {
@@ -73,7 +74,7 @@ async function showThresholdsMenu(ctx) {
   const major = (await settingsDb.get('tier_major_pct')) || config.tierMajorThresholdPct;
   const mid = (await settingsDb.get('tier_mid_pct')) || config.tierMidThresholdPct;
   const micro = (await settingsDb.get('tier_micro_pct')) || config.tierMicroThresholdPct;
-  await ctx.editMessageText(
+  await renderScreen(ctx, 
     `🎯 <b>Thresholds</b>\n\nTier defaults (Bot Mode scales these further):\n` +
       `Major: ${major}%\nMid: ${mid}%\nMicro: ${micro}%`,
     { parse_mode: 'HTML', ...inline.thresholdsMenu }
@@ -90,7 +91,7 @@ async function showOverrides(ctx) {
   const all = await coinsDb.getAll();
   const overridden = all.filter((c) => c.threshold_type !== 'pct' || true); // all coins technically have a stored value; show top few by symbol for now
   const lines = overridden.slice(0, 15).map((c) => `${c.symbol}: ${c.threshold_value}${c.threshold_type === 'pct' ? '%' : ' USD'}`);
-  await ctx.editMessageText(`📋 <b>Per-coin thresholds</b>\n\n${lines.join('\n') || 'None set.'}`, {
+  await renderScreen(ctx, `📋 <b>Per-coin thresholds</b>\n\n${lines.join('\n') || 'None set.'}`, {
     parse_mode: 'HTML',
     ...inline.thresholdsMenu,
   });

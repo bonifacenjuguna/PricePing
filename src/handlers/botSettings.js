@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const bbtb = require('../keyboards/bbtb');
 const pendingInput = require('../services/pendingInput');
@@ -10,12 +11,12 @@ const { redis } = require('../db/redis');
 const config = require('../config');
 
 async function showHub(ctx) {
-  await ctx.editMessageText('🛠️ <b>Bot</b>', { parse_mode: 'HTML', ...inline.botHub });
+  await renderScreen(ctx, '🛠️ <b>Bot</b>', { parse_mode: 'HTML', ...inline.botHub });
 }
 
 async function showTimezone(ctx) {
   const tz = await timezoneService.getTimezone();
-  await ctx.editMessageText(`🌍 <b>Timezone</b>\n\nCurrent: <code>${tz}</code>`, {
+  await renderScreen(ctx, `🌍 <b>Timezone</b>\n\nCurrent: <code>${tz}</code>`, {
     parse_mode: 'HTML',
     ...inline.timezoneScreen,
   });
@@ -52,7 +53,7 @@ async function showStatus(ctx) {
     `Redis: ${redisOk ? '✅ connected' : '⚠️ ' + redis.status}\n` +
     `Memory: ${Math.round(mem.rss / 1024 / 1024)}MB / ${config.memoryLimitMb}MB`;
 
-  await ctx.editMessageText(text, { parse_mode: 'HTML', ...inline.statusScreen });
+  await renderScreen(ctx, text, { parse_mode: 'HTML', ...inline.statusScreen });
 }
 
 module.exports = { showHub, showTimezone, promptSetTimezone, showStatus };

@@ -1,3 +1,4 @@
+const renderScreen = require('../utils/renderScreen');
 const inline = require('../keyboards/inline');
 const bbtb = require('../keyboards/bbtb');
 const channelsDb = require('../db/channels');
@@ -6,7 +7,7 @@ const templateEngine = require('../services/templateEngine');
 const pendingInput = require('../services/pendingInput');
 
 async function showHub(ctx) {
-  await ctx.editMessageText('📤 <b>Broadcasting</b>\n\nWhere posts go, and what they look like.', {
+  await renderScreen(ctx, '📤 <b>Broadcasting</b>\n\nWhere posts go, and what they look like.', {
     parse_mode: 'HTML',
     ...inline.broadcastingHub,
   });
@@ -14,7 +15,7 @@ async function showHub(ctx) {
 
 async function showChannelList(ctx) {
   const channels = await channelsDb.getAll();
-  await ctx.editMessageText('📺 <b>Channels</b>\n\n⭐ = primary (from CHANNEL_ID, always on)', {
+  await renderScreen(ctx, '📺 <b>Channels</b>\n\n⭐ = primary (from CHANNEL_ID, always on)', {
     parse_mode: 'HTML',
     ...inline.channelList(channels),
   });
@@ -24,7 +25,7 @@ async function showChannelDetail(ctx, name) {
   const channel = await channelsDb.get(name);
   if (!channel) return ctx.answerCbQuery('Channel not found.');
   const toggles = await channelsDb.getPostTypeToggles(name);
-  await ctx.editMessageText(
+  await renderScreen(ctx, 
     `<b>${channel.is_default ? '⭐ ' : ''}${channel.name}</b>\n<code>${channel.chat_id}</code>\n\nTap a post type to toggle it for this channel.`,
     { parse_mode: 'HTML', ...inline.channelDetail(channel, toggles) }
   );
@@ -50,7 +51,7 @@ async function confirmRemoveChannel(ctx, name) {
   const channel = await channelsDb.get(name);
   if (!channel) return ctx.answerCbQuery('Channel not found.');
   if (channel.is_default) return ctx.answerCbQuery('The primary channel can\u2019t be removed.');
-  await ctx.editMessageText(`Remove channel <b>${name}</b>? It will stop receiving any posts.`, {
+  await renderScreen(ctx, `Remove channel <b>${name}</b>? It will stop receiving any posts.`, {
     parse_mode: 'HTML',
     ...inline.channelRemoveConfirm(name),
   });
@@ -67,7 +68,7 @@ async function removeChannel(ctx, name) {
 }
 
 async function showFormatMenu(ctx) {
-  await ctx.editMessageText('✍️ <b>Post Format</b>\n\nPick an alert type to view or edit its caption template.', {
+  await renderScreen(ctx, '✍️ <b>Post Format</b>\n\nPick an alert type to view or edit its caption template.', {
     parse_mode: 'HTML',
     ...inline.postFormatMenu,
   });
@@ -76,7 +77,7 @@ async function showFormatMenu(ctx) {
 async function showFormatDetail(ctx, alertType) {
   const custom = await templatesDb.get(alertType);
   const current = custom || templateEngine.DEFAULT_TEMPLATES[alertType] || '(no default)';
-  await ctx.editMessageText(`<b>${alertType}</b> caption template:\n\n<code>${current}</code>`, {
+  await renderScreen(ctx, `<b>${alertType}</b> caption template:\n\n<code>${current}</code>`, {
     parse_mode: 'HTML',
     ...inline.postFormatDetail(alertType),
   });

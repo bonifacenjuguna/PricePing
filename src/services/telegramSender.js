@@ -87,4 +87,15 @@ async function broadcastToAllChannels(text, opts = {}) {
   return results;
 }
 
-module.exports = { init, broadcast, broadcastText, broadcastToAllChannels, normalizeChannel };
+// Direct DM to the owner — used for system-level failures (e.g. Binance
+// sync completely failing) that would otherwise only show up in Railway's
+// logs, invisible to the owner inside Telegram.
+async function notifyOwner(text) {
+  try {
+    await botInstance.telegram.sendMessage(config.adminId, text, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.warn('Failed to DM owner', { message: err.message });
+  }
+}
+
+module.exports = { init, broadcast, broadcastText, broadcastToAllChannels, normalizeChannel, notifyOwner };
