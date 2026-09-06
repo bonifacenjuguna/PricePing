@@ -11,6 +11,8 @@ const telegramSender = require('./services/telegramSender');
 const binanceSync = require('./services/binanceSync');
 const poller = require('./services/poller');
 const automationScheduler = require('./services/automationScheduler');
+const memoryWatchdog = require('./services/memoryWatchdog');
+const heartbeatWatchdog = require('./services/heartbeatWatchdog');
 
 const bot = new Telegraf(config.botToken);
 telegramSender.init(bot);
@@ -24,23 +26,6 @@ bot.on('text', textInput.handleText);
 bot.catch((err, ctx) => {
   logger.error('Unhandled error in bot update', { message: err.message, updateType: ctx.updateType });
 });
-
-// --- Memory watchdog --------------------------------------------------------
-// Same reasoning as before: a single-owner bot on Railway's free/hobby tier
-// has a hard memory ceiling — this logs a warning well before hitting it,
-// and force-runs a GC pass if --expose-gc is available, rather than
-// waiting for Railway to OOM-kill the process.
-function startMemoryWatchdog() {
-  setInterval(() => {
-    const mem = process.memoryUsage();
-    const usedMb = mem.rss / 1024 / 1024;
-    const ratio = usedMb / config.memoryLimitMb;
-    if (ratio >= config.memoryWarnRatio) {
-      logger.warn('Memory usage high', { usedMb: Math.round(usedMb), limitMb: config.memoryLimitMb, ratio: ratio.toFixed(2) });
-      if (global.gc) global.gc();
-    }
-  }, config.memoryCheckIntervalMs);
-}
 
 // --- Boot --------------------------------------------------------------------
 async function main() {
@@ -62,7 +47,8 @@ async function main() {
 
   app.listen(config.port, () => logger.info(`HTTP server listening on port ${config.port}`));
 
-  startMemoryWatchdog();
+  memoryWatchdog.init(bot);
+  heartbeatWatchdog.init(bot);
   binanceSync.startSyncSchedule();
   poller.startPolling();
   automationScheduler.startAutomation();

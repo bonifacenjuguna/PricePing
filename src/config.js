@@ -31,7 +31,7 @@ module.exports = {
   cooldownMinutes: Number(process.env.COOLDOWN_MINUTES) || 5,
   binanceFailureAlertThreshold: Number(process.env.BINANCE_FAILURE_ALERT_THRESHOLD) || 10,
 
-  memoryLimitMb: Number(process.env.MEMORY_LIMIT_MB) || 220,
+  memoryLimitMb: Number(process.env.MEMORY_LIMIT_MB) || 420,
   memoryCheckIntervalMs: Number(process.env.MEMORY_CHECK_INTERVAL_MS) || 60000,
   memoryWarnRatio: Number(process.env.MEMORY_WARN_RATIO) || 0.8,
 
@@ -84,6 +84,21 @@ module.exports = {
   // multiplier — a hard daily post cap per channel, and Movers automation
   // is skipped entirely (see services/automationScheduler.js).
   antiSpamMaxPostsPerDay: Number(process.env.ANTI_SPAM_MAX_POSTS_PER_DAY) || 12,
+
+  // Caps total tracked coins after Binance sync's volume ranking — keeps
+  // the most popular coins (already sorted most-volume-first) and drops
+  // the long tail. Directly controls memory footprint: fewer coins =
+  // fewer logo files held/downloaded, fewer rows polled every tick.
+  // Sized conservatively for Railway's Free plan 512MB hard ceiling.
+  maxTrackedCoins: Number(process.env.MAX_TRACKED_COINS) || 50,
+
+  // Core coins that stay alive via CoinGecko/Kraken fallback (see
+  // services/priceFallback.js) if Binance goes fully unreachable across
+  // every mirror. Comma-separated in env; defaults to the original 10.
+  coreCoinSymbols: (process.env.CORE_COIN_SYMBOLS || 'BTC,ETH,BNB,SOL,XRP,TRX,DOGE,XAUT,USDC,USDT')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean),
 
   assetsDir,
   logosDir,

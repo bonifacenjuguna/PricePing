@@ -8,10 +8,9 @@ const timezoneService = require('./timezoneService');
 const cardRenderer = require('./cardRenderer');
 const chartRenderer = require('./chartRenderer');
 const telegramSender = require('./telegramSender');
+const { fetchWithMirrors } = require('./binanceClient');
 
 const TICK_MS = 60 * 1000; // check every minute; actual cadence per post type is mode-scaled and tracked via last-run timestamps
-const TICKER_24H_URL = 'https://api.binance.com/api/v3/ticker/24hr';
-const KLINES_URL = 'https://api.binance.com/api/v3/klines';
 
 async function getLastRun(key) {
   const val = await settingsDb.get(`last_run_${key}`);
@@ -63,9 +62,7 @@ async function runChartAutomation() {
   await settingsDb.set('chart_rotation_idx', (idx + 1) % majors.length);
 
   try {
-    const res = await fetch(`${KLINES_URL}?symbol=${coin.binance_pair}&interval=15m&limit=96`);
-    if (!res.ok) throw new Error(`Binance klines HTTP ${res.status}`);
-    const raw = await res.json();
+    const raw = await fetchWithMirrors(`/api/v3/klines?symbol=${coin.binance_pair}&interval=15m&limit=96`);
     const candles = raw.map((k) => ({ openTime: k[0], open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]) }));
 
     const photo = await chartRenderer.renderChart({
@@ -98,9 +95,8 @@ async function runMoversAutomation() {
   try {
     const coins = await coinsDb.getAll();
     const tracked = new Set(coins.filter((c) => !c.is_stable).map((c) => c.binance_pair));
-    const res = await fetch(TICKER_24H_URL);
-    if (!res.ok) throw new Error(`Binance ticker/24hr HTTP ${res.status}`);
-    const tickers = (await res.json()).filter((t) => tracked.has(t.symbol));
+    const allTickers = await fetchWithMirrors('/api/v3/ticker/24hr');
+    const tickers = allTickers.filter((t) => tracked.has(t.symbol));
 
     const sorted = tickers.slice().sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent));
     const gainers = sorted.slice(0, 3);
@@ -173,8 +169,7 @@ async function sendDigest(kind) {
   try {
     const coins = await coinsDb.getAll();
     const tracked = coins.filter((c) => !c.is_stable && c.last_price);
-    const res = await fetch(TICKER_24H_URL);
-    const tickers = res.ok ? await res.json() : [];
+    const tickers = await fetchWithMirrors('/api/v3/ticker/24hr').catch(() => []);
     const tickerByPair = new Map(tickers.map((t) => [t.symbol, t]));
 
     let biggestMover = null;

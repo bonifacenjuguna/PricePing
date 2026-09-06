@@ -46,3 +46,33 @@
 
 Reply keyboard (BBTB) rows are shaped to whatever screen you're on — no
 button whose destination is the screen you're already viewing.
+
+## v1.0.1 patch notes
+
+- **Fixed:** `/start`'s inline menu and the persistent BBTB row were being
+  attached to the same message — Telegram only allows one `reply_markup`
+  per message, so the reply keyboard silently overwrote the inline one.
+  Now sent as two messages; BBTB text taps route through
+  `utils/renderScreen.js` (edit if from an inline tap, fresh send if from
+  a BBTB tap).
+- **Fixed:** `templates` (and defensively `custom_vars`) didn't actually
+  exist on the production database — added as an idempotent migration
+  (`011_v1_0_1_patch.sql`).
+- **Fixed:** memory footprint. `MAX_TRACKED_COINS` (default 50) caps the
+  Binance-synced coin list to the most popular, most-volume coins —
+  sized for Railway's Free plan 512MB hard ceiling. `MEMORY_LIMIT_MB`
+  default raised to 420 to match that ceiling with headroom.
+- **Restored & fixed:** the original bot's memory watchdog and heartbeat
+  watchdog (`services/memoryWatchdog.js`, `heartbeatWatchdog.js`) — same
+  graceful-restart-with-admin-DM design as before, but now measures `rss`
+  instead of `heapUsed`. `sharp`'s image buffers live in native memory
+  outside the V8 heap, so heapUsed alone was blind to the single biggest
+  memory consumer in this bot.
+- **Added:** `services/priceFallback.js` — CoinGecko, then Kraken, as an
+  automatic fallback for your core coins (`CORE_COIN_SYMBOLS`) if Binance
+  goes fully unreachable across every mirror. Recovers automatically —
+  you get a DM both when it fails over and when Binance comes back.
+- **Centralized:** every Binance API call (sync, poller, chart/klines) now
+  goes through `services/binanceClient.js`'s shared mirror list, so an
+  outage on one host doesn't leave some features recovered and others
+  still dark.

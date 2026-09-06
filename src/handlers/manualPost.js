@@ -8,9 +8,9 @@ const cardRenderer = require('../services/cardRenderer');
 const chartRenderer = require('../services/chartRenderer');
 const telegramSender = require('../services/telegramSender');
 const templateEngine = require('../services/templateEngine');
+const { fetchWithMirrors } = require('../services/binanceClient');
 
 const PAGE_SIZE = 8;
-const KLINES_URL = 'https://api.binance.com/api/v3/klines';
 
 const PERIOD_TO_KLINES = {
   '1h': { interval: '1m', limit: 60 },
@@ -99,9 +99,7 @@ async function executeSend(ctx, kindKey, channelName) {
       const coin = await coinsDb.get(symbol);
       if (!coin) throw new Error('Coin not tracked.');
       const { interval, limit } = PERIOD_TO_KLINES[period];
-      const res = await fetch(`${KLINES_URL}?symbol=${coin.binance_pair}&interval=${interval}&limit=${limit}`);
-      if (!res.ok) throw new Error(`Binance klines HTTP ${res.status}`);
-      const raw = await res.json();
+      const raw = await fetchWithMirrors(`/api/v3/klines?symbol=${coin.binance_pair}&interval=${interval}&limit=${limit}`);
       const candles = raw.map((k) => ({ openTime: k[0], open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]) }));
       photo = await chartRenderer.renderChart({
         coin: { symbol: coin.symbol, name: coin.name, color: coin.color },

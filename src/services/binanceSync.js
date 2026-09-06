@@ -6,30 +6,13 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const coinsDb = require('../db/coins');
 const { resolveLogoSvg } = require('../utils/logoFetch');
+const { fetchWithMirrors } = require('./binanceClient');
 
 // Same as coinRegistry.js's LOGO_SIZE reasoning — cards composite this onto
 // a 3x-supersampled canvas (see cardRenderer.js SUPERSAMPLE), so the source
 // needs real detail at that scale, not an upscaled low-res image.
 const LOGO_SIZE = 512;
 
-// Binance's edge sometimes geo-blocks or rate-limits a specific host —
-// tries each mirror in order rather than failing outright on the first one.
-const API_HOSTS = ['https://api.binance.com', 'https://api1.binance.com', 'https://api2.binance.com', 'https://api3.binance.com', 'https://data-api.binance.vision'];
-
-async function fetchWithMirrors(pathAndQuery) {
-  let lastErr;
-  for (const host of API_HOSTS) {
-    try {
-      const res = await fetch(`${host}${pathAndQuery}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status} from ${host}`);
-      return await res.json();
-    } catch (err) {
-      lastErr = err;
-      logger.warn(`Binance host ${host} failed, trying next mirror`, { message: err.message });
-    }
-  }
-  throw lastErr;
-}
 
 const KNOWN_STABLES = new Set(['USDT', 'USDC', 'FDUSD', 'TUSD', 'DAI', 'USDP', 'PYUSD', 'EUR', 'EURI']);
 
@@ -116,17 +99,23 @@ async function runSync() {
     .map((s) => ({ pair: s.symbol, baseAsset: s.baseAsset, ticker: tickerByPair.get(s.symbol) }))
     .sort((a, b) => Number(b.ticker.quoteVolume) - Number(a.ticker.quoteVolume));
 
+  // Cap total tracked coins (MAX_TRACKED_COINS) — `ranked` is already
+  // sorted by 24h volume descending, so this keeps the most popular ones
+  // and drops the long tail. Directly controls memory footprint: fewer
+  // coins = fewer logos held/downloaded, fewer rows polled every tick.
+  const capped = ranked.slice(0, config.maxTrackedCoins);
+
   const existing = await coinsDb.getAll();
   const existingSymbols = new Set(existing.map((c) => c.symbol));
-  const liveSymbols = new Set(ranked.map((r) => r.baseAsset.toUpperCase()));
+  const liveSymbols = new Set(capped.map((r) => r.baseAsset.toUpperCase()));
 
   const added = [];
   const updated = [];
   const removed = [];
 
-  for (let i = 0; i < ranked.length; i += 1) {
+  for (let i = 0; i < capped.length; i += 1) {
     const rank = i + 1;
-    const { pair, baseAsset, ticker } = ranked[i];
+    const { pair, baseAsset, ticker } = capped[i];
     const symbol = baseAsset.toUpperCase();
     const tier = tierForRank(rank);
     const isStable = KNOWN_STABLES.has(symbol);
@@ -180,7 +169,7 @@ async function runSync() {
   }
 
   logger.info('Binance sync complete', { added: added.length, updated: updated.length, removed: removed.length });
-  return { added, removed, total: ranked.length };
+  return { added, removed, total: capped.length, universeSize: ranked.length };
 }
 
 let syncTimer = null;

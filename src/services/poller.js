@@ -4,8 +4,9 @@ const coinsDb = require('../db/coins');
 const modes = require('./modes');
 const cardRenderer = require('./cardRenderer');
 const telegramSender = require('./telegramSender');
-
-const TICKER_PRICE_URL = 'https://api.binance.com/api/v3/ticker/price';
+const { fetchWithMirrors } = require('./binanceClient');
+const priceFallback = require('./priceFallback');
+const heartbeatDb = require('../db/heartbeat');
 
 // Effective threshold for a coin right now = its tier/override base value,
 // scaled by the current Bot Mode's multiplier. Nitro (0.25x) fires far more
@@ -100,19 +101,54 @@ async function checkCoin(coin, livePrice) {
   await coinsDb.setLastPrice(coin.symbol, livePrice);
 }
 
+let binanceDown = false;
+
 async function pollOnce() {
-  const res = await fetch(TICKER_PRICE_URL);
-  if (!res.ok) throw new Error(`Binance ticker/price HTTP ${res.status}`);
-  const tickers = await res.json();
-  const priceByPair = new Map(tickers.map((t) => [t.symbol, Number(t.price)]));
+  const tickStart = Date.now();
+  let priceByPair;
+  let usingFallback = false;
+
+  try {
+    const tickers = await fetchWithMirrors('/api/v3/ticker/price');
+    priceByPair = new Map(tickers.map((t) => [t.symbol, Number(t.price)]));
+    if (binanceDown) {
+      binanceDown = false;
+      logger.info('Binance reachable again — resuming normal polling');
+      telegramSender.notifyOwner('✅ Binance is back — full price polling resumed.').catch(() => {});
+    }
+  } catch (err) {
+    logger.warn('Binance ticker/price fully unreachable, falling back to core coins only', { message: err.message });
+    if (!binanceDown) {
+      binanceDown = true;
+      telegramSender.notifyOwner(
+        `⚠️ Binance is unreachable across all mirrors. Falling back to CoinGecko/Kraken for your ${config.coreCoinSymbols.length} core coins only — everything else is paused until Binance recovers.`
+      ).catch(() => {});
+    }
+    usingFallback = true;
+    priceByPair = null;
+  }
 
   const coins = await coinsDb.getAll();
-  for (const coin of coins) {
-    const livePrice = priceByPair.get(coin.binance_pair);
-    if (livePrice === undefined) continue; // eslint-disable-line no-continue
-    // eslint-disable-next-line no-await-in-loop
-    await checkCoin(coin, livePrice);
+
+  if (usingFallback) {
+    const corePrices = await priceFallback.getCorePrices();
+    for (const coin of coins) {
+      if (!config.coreCoinSymbols.includes(coin.symbol)) continue; // eslint-disable-line no-continue
+      const livePrice = corePrices[coin.symbol];
+      if (livePrice === undefined) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      await checkCoin(coin, livePrice);
+    }
+  } else {
+    for (const coin of coins) {
+      const livePrice = priceByPair.get(coin.binance_pair);
+      if (livePrice === undefined) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      await checkCoin(coin, livePrice);
+    }
   }
+
+  await heartbeatDb.touch(Date.now() - tickStart).catch((err) => logger.warn('Heartbeat touch failed', { message: err.message }));
 }
 
 let pollTimer = null;
