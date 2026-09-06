@@ -87,7 +87,10 @@ function buildVariables(ctx) {
     price: format.formatPrice(ctx.price),
     time: now.toISOString().slice(11, 16) + ' UTC',
     date: now.toISOString().slice(0, 10),
-    coin_rank: String(config.coins.findIndex((c) => c.symbol === coin.symbol) + 1),
+    // v1.0.0: coin_rank now comes from the coin's Binance-volume-derived
+    // tier/rank (set by binanceSync.js), not a fixed static list index —
+    // caller passes it in ctx.coin.rank when available.
+    coin_rank: coin.rank !== undefined && coin.rank !== null ? String(coin.rank) : null,
     channel_name: ctx.channel ? ctx.channel.name : null,
     channel_handle: channelHandle(ctx.channel),
     bot_name: config.botName,
