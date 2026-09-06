@@ -1,14 +1,51 @@
 const path = require('path');
 
 // ---------------------------------------------------------------------------
-// v1.0.0: the static coin list is gone. Coins are now discovered and kept in
-// sync automatically from Binance's public exchangeInfo/ticker endpoints
-// (see services/binanceSync.js) and persisted in the `coins` table (see
-// db/coins.js) — no more manual /addcoin. This file now only exposes the
-// asset directory paths, kept env-var-free so it stays safely requirable
-// during Railway's build step, same reasoning as before.
+// Coin list — see full field docs in config.js. Deliberately has NO
+// dependency on environment variables so it can be safely required by
+// scripts/prepare-assets.js during Railway's build step, before runtime
+// env vars (DATABASE_URL, REDIS_URL, etc., especially Railway's plugin
+// reference variables) are necessarily resolved.
+//
+// milestoneStep: round-number spacing used for milestone alerts (e.g. BTC
+// crossing every $10,000). null disables milestone alerts for that coin
+// (stablecoins — a "milestone" at $1.00 is meaningless noise).
 // ---------------------------------------------------------------------------
+const coins = [
+  { symbol: 'BTC', name: 'Bitcoin', binancePair: 'BTCUSDT', color: '#F7931A', emoji: '🟠', isStable: false, milestoneStep: 10000 },
+  { symbol: 'ETH', name: 'Ethereum', binancePair: 'ETHUSDT', color: '#627EEA', emoji: '🔷', isStable: false, milestoneStep: 500 },
+  { symbol: 'BNB', name: 'BNB', binancePair: 'BNBUSDT', color: '#F0B90B', emoji: '🟡', isStable: false, milestoneStep: 50 },
+  { symbol: 'SOL', name: 'Solana', binancePair: 'SOLUSDT', color: '#9945FF', emoji: '🟣', isStable: false, milestoneStep: 20 },
+  { symbol: 'XRP', name: 'XRP', binancePair: 'XRPUSDT', color: '#23292F', emoji: '⚪', isStable: false, milestoneStep: 0.5 },
+  { symbol: 'TRX', name: 'TRON', binancePair: 'TRXUSDT', color: '#EF0027', emoji: '🔴', isStable: false, milestoneStep: 0.05 },
+  { symbol: 'DOGE', name: 'Dogecoin', binancePair: 'DOGEUSDT', color: '#C2A633', emoji: '🐕', isStable: false, milestoneStep: 0.05 },
+  { symbol: 'XAUT', name: 'Tether Gold', binancePair: 'XAUTUSDT', color: '#D4AF37', emoji: '🥇', isStable: false, milestoneStep: 100 },
+  { symbol: 'USDC', name: 'USD Coin', binancePair: 'USDCUSDT', color: '#2775CA', emoji: '🔵', isStable: true, milestoneStep: null },
+  {
+    symbol: 'USDT',
+    name: 'Tether',
+    binancePair: null,
+    impliedFromInverse: 'USDCUSDT',
+    color: '#26A17B',
+    isStable: true,
+    milestoneStep: null,
+  },
+];
+
+const defaultThresholds = {
+  BTC: 500,
+  ETH: 50,
+  BNB: 5,
+  SOL: 2,
+  XRP: 0.02,
+  TRX: 0.005,
+  DOGE: 0.002,
+  USDT: 0.003,
+  USDC: 0.003,
+  XAUT: 25,
+};
+
 const assetsDir = path.join(__dirname, 'assets');
 const logosDir = path.join(__dirname, 'assets', 'logos');
 
-module.exports = { assetsDir, logosDir };
+module.exports = { coins, defaultThresholds, assetsDir, logosDir };

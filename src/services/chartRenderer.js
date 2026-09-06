@@ -375,7 +375,7 @@ async function compositeLogo(base, coin) {
 // with coin logo/name/price/pct badge, and watermark. Dispatches on `style`
 // ('line' | 'candle') — candle style needs open/high/low on each candle
 // (falls back gracefully to close-only data by flattening wicks to a dot).
-// coin: entry from the coins table (db/coins.js). candles: [{openTime, open?, high?, low?,
+// coin: entry from config.coins. candles: [{openTime, open?, high?, low?,
 // close}] oldest->newest.
 async function renderChart({ coin, candles, periodKey, style = 'line' }) {
   const preset = PERIOD_PRESETS[periodKey] || PERIOD_PRESETS['24h'];

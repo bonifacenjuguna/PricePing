@@ -1,165 +1,306 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const coinsDb = require('../db/coins');
-const modes = require('./modes');
-const cardRenderer = require('./cardRenderer');
-const telegramSender = require('./telegramSender');
-const { fetchWithMirrors } = require('./binanceClient');
-const priceFallback = require('./priceFallback');
+const marketData = require('./marketData');
+const thresholdsDb = require('../db/thresholds');
+const coinStateDb = require('../db/coinState');
+const alertsLogDb = require('../db/alertsLog');
+const settingsDb = require('../db/settings');
 const heartbeatDb = require('../db/heartbeat');
+const channelsDb = require('../db/channels');
+const milestonesDb = require('../db/milestones');
+const cooldownsDb = require('../db/cooldowns');
+const events = require('../db/events');
+const telegramSender = require('./telegramSender');
+const rulesEngine = require('./rulesEngine');
 
-// Effective threshold for a coin right now = its tier/override base value,
-// scaled by the current Bot Mode's multiplier. Nitro (0.25x) fires far more
-// often than Anti-Spam (2x) off the exact same base number.
-async function effectiveThreshold(coin) {
-  const mode = await modes.getCurrentMode();
-  return coin.threshold_value * mode.multiplier;
+let consecutiveFailures = 0;
+let failureAlertSent = false;
+let capNotifiedThisWindow = false;
+let noDefaultChannelWarned = false;
+const consecutiveMisses = new Map(); // symbol -> count of ticks with no price returned
+const delistWarned = new Set(); // symbols already flagged this "episode" — resets when price returns
+const DELIST_MISS_THRESHOLD = 20; // ~10 minutes at the default 30s poll interval
+
+function coinBySymbol(symbol) {
+  return config.coins.find((c) => c.symbol === symbol);
 }
 
-function pctChange(oldPrice, newPrice) {
-  if (!Number.isFinite(oldPrice) || oldPrice === 0) return null;
-  return ((newPrice - oldPrice) / oldPrice) * 100;
+function cooldownActive(lastAlertAt, cooldownMinutes) {
+  if (!lastAlertAt) return false;
+  const elapsedMs = Date.now() - new Date(lastAlertAt).getTime();
+  return elapsedMs < cooldownMinutes * 60 * 1000;
 }
 
-async function checkCoin(coin, livePrice) {
-  if (coin.muted || coin.is_stable) {
-    await coinsDb.setLastPrice(coin.symbol, livePrice);
+function muteActive(pausedUntil) {
+  if (!pausedUntil) return false;
+  return new Date(pausedUntil).getTime() > Date.now();
+}
+
+// Handles overnight windows (e.g. start=22, end=7 means "quiet from 22:00
+// to 07:00 UTC", wrapping past midnight) as well as same-day windows.
+function isWithinQuietHours(quietHours, now = new Date()) {
+  if (!quietHours) return false;
+  const { startHourUtc, endHourUtc } = quietHours;
+  const hour = now.getUTCHours();
+  if (startHourUtc === endHourUtc) return false; // a zero-width window means "off"
+  if (startHourUtc < endHourUtc) return hour >= startHourUtc && hour < endHourUtc;
+  return hour >= startHourUtc || hour < endHourUtc; // wraps past midnight
+}
+
+async function handleBinanceFailure(bot, err) {
+  consecutiveFailures += 1;
+  logger.warn(`Binance fetch failed (${consecutiveFailures} consecutive)`, { message: err.message });
+
+  if (consecutiveFailures >= config.binanceFailureAlertThreshold && !failureAlertSent) {
+    failureAlertSent = true;
+    await events.record('binance_outage', `${consecutiveFailures} consecutive failed ticks`);
+    try {
+      await bot.telegram.sendMessage(
+        config.adminId,
+        `Heads up: Binance price fetch has failed ${consecutiveFailures} times in a row. ` +
+          `Price alerts are paused until it recovers.`
+      );
+    } catch (notifyErr) {
+      logger.warn('Could not notify admin of Binance outage', { message: notifyErr.message });
+    }
+  }
+}
+
+// Global pause supports an optional snooze wake-time (/pause 2h). If it's
+// passed, auto-resume before doing anything else this tick.
+async function resolvePauseState() {
+  const pausedUntil = await settingsDb.getPausedUntil();
+  if (pausedUntil && pausedUntil.getTime() <= Date.now()) {
+    await settingsDb.setPaused(false);
+    logger.info('Snooze expired — auto-resumed');
+    return false;
+  }
+  return settingsDb.isPaused();
+}
+
+// Milestone check: has price crossed into a new step-multiple band since
+// the last time we alerted on one? step: the coin's EFFECTIVE step (a
+// /setmilestone override, or the factory default from coins.js) — null
+// means milestones are off for this coin. Independent of the threshold/
+// cooldown system — its own natural "cooldown" is that price has to move
+// a full step to re-trigger. Returns an alert object or null.
+function checkMilestone(coin, price, step, lastMilestone) {
+  if (!step || coin.isStable) return null;
+  const level = Math.floor(price / step) * step;
+  if (lastMilestone === null || lastMilestone === undefined) return { seedOnly: true, level };
+  if (level === lastMilestone) return null;
+  return { seedOnly: false, level, direction: level > lastMilestone ? 'up' : 'down' };
+}
+
+function qualifiesForThresholdAlert(price, baseline, threshold) {
+  if (!threshold) return { qualifies: false };
+  const changeUsd = price - baseline;
+  const changePct = (changeUsd / baseline) * 100;
+  const moveSize = threshold.type === 'pct' ? Math.abs(changePct) : Math.abs(changeUsd);
+  return { qualifies: moveSize >= threshold.value, changeUsd, changePct };
+}
+
+async function tickInner(bot) {
+  const paused = await resolvePauseState();
+  if (paused) return;
+
+  const quietHours = await settingsDb.getQuietHours();
+  const quietNow = isWithinQuietHours(quietHours);
+  const compact = await settingsDb.getCompactCards();
+
+  const [thresholdChannel, milestoneChannel] = await Promise.all([
+    channelsDb.resolveForType('threshold'),
+    channelsDb.resolveForType('milestone'),
+  ]);
+  if (!thresholdChannel && !milestoneChannel) {
+    if (!noDefaultChannelWarned) {
+      noDefaultChannelWarned = true;
+      logger.error('No default channel configured — alerts have nowhere to go. Run migrations or /addchannel + /setdefaultchannel.');
+    }
+    return;
+  }
+  noDefaultChannelWarned = false;
+
+  const [thresholds, coinStates, milestoneSteps, cooldownOverrides] = await Promise.all([
+    thresholdsDb.getAll(),
+    coinStateDb.getAll(),
+    milestonesDb.getAll(),
+    cooldownsDb.getAll(),
+  ]);
+
+  let prices;
+  try {
+    prices = await marketData.fetchAllPrices();
+    if (consecutiveFailures > 0) {
+      logger.info(`Binance recovered after ${consecutiveFailures} failed ticks`);
+    }
+    consecutiveFailures = 0;
+    failureAlertSent = false;
+  } catch (err) {
+    await handleBinanceFailure(bot, err);
     return;
   }
 
-  const lastAlertPrice = coin.last_alert_price !== null ? Number(coin.last_alert_price) : livePrice;
-  const changePct = pctChange(lastAlertPrice, livePrice);
-  const changeUsd = livePrice - lastAlertPrice;
-  const threshold = await effectiveThreshold(coin);
+  const toSend = [];
 
-  let fired = false;
-
-  if (coin.threshold_type === 'pct' && changePct !== null && Math.abs(changePct) >= threshold) {
-    fired = true;
-  } else if (coin.threshold_type === 'usd' && Math.abs(changeUsd) >= threshold) {
-    fired = true;
-  }
-
-  // Milestone check — crossing a round-number step, independent of the
-  // threshold move above.
-  let milestoneLevel = null;
-  let isBigMilestone = false;
-  if (coin.milestone_step) {
-    const step = Number(coin.milestone_step);
-    const prevMilestone = Math.floor(lastAlertPrice / step);
-    const newMilestone = Math.floor(livePrice / step);
-    if (newMilestone !== prevMilestone && newMilestone > 0) {
-      milestoneLevel = newMilestone * step;
-      isBigMilestone = newMilestone % 10 === 0;
+  for (const coin of config.coins) {
+    const price = prices.get(coin.symbol);
+    if (price === undefined) {
+      // Tracks a coin whose price has stopped coming back from Binance —
+      // e.g. delisted, pair renamed, or a typo in a runtime-added pair.
+      // Distinct from a full Binance outage (handled above): this can
+      // happen for just ONE coin while everything else reports fine.
+      const misses = (consecutiveMisses.get(coin.symbol) || 0) + 1;
+      consecutiveMisses.set(coin.symbol, misses);
+      if (misses === DELIST_MISS_THRESHOLD && !delistWarned.has(coin.symbol)) {
+        delistWarned.add(coin.symbol);
+        events.record('symbol_no_price', `${coin.symbol} (${coin.binancePair || coin.impliedFromInverse}) has returned no price for ${misses} consecutive ticks`).catch(() => {});
+        bot.telegram
+          .sendMessage(
+            config.adminId,
+            `\u26A0\uFE0F ${coin.symbol} hasn't returned a price from Binance in a while (~${Math.round(
+              (misses * config.pollIntervalMs) / 60000
+            )} minutes). It may have been delisted, renamed, or there's a typo in its pair. Worth checking with /prices.`
+          )
+          .catch(() => {});
+      }
+      continue;
     }
+    if (consecutiveMisses.has(coin.symbol)) {
+      consecutiveMisses.delete(coin.symbol);
+      delistWarned.delete(coin.symbol);
+    }
+
+    await coinStateDb.updateLastPrice(coin.symbol, price);
+
+    const state = coinStates[coin.symbol] || {};
+    const milestoneInfo = milestoneSteps.get(coin.symbol) || { step: coin.milestoneStep };
+
+    if (!muteActive(state.pausedUntil) && milestoneChannel) {
+      const milestone = checkMilestone(coin, price, milestoneInfo.step, state.lastMilestone);
+      if (milestone) {
+        await coinStateDb.setLastMilestone(coin.symbol, milestone.level);
+        if (!milestone.seedOnly && !quietNow) {
+          // "Big" milestone = crossing a multiple of 10x the step (e.g.
+          // every $5,000 for a coin with a $500 step) — gets a more
+          // prominent card treatment, see cardRenderer.js.
+          const isBigMilestone = milestoneInfo.step > 0 && Math.abs(milestone.level / (milestoneInfo.step * 10)) % 1 < 1e-9;
+          toSend.push({
+            coin,
+            price,
+            changeUsd: null,
+            changePct: null,
+            direction: milestone.direction,
+            alertType: 'milestone',
+            milestoneLevel: milestone.level,
+            isBigMilestone,
+            compact,
+            channel: milestoneChannel,
+          });
+        }
+      }
+    }
+
+    if (state.lastAlertPrice === null || state.lastAlertPrice === undefined) {
+      const seeded = await coinStateDb.seedBaselineIfMissing(coin.symbol, price);
+      if (seeded) continue; // first-run baseline — no threshold alert on the very first tick
+    }
+
+    if (muteActive(state.pausedUntil) || !thresholdChannel) continue;
+
+    const threshold = thresholds[coin.symbol];
+    const baseline = state.lastAlertPrice;
+    if (baseline === null || baseline === undefined) continue;
+
+    const { qualifies, changeUsd, changePct } = qualifiesForThresholdAlert(price, baseline, threshold);
+    if (!qualifies || quietNow) continue;
+
+    const cooldownMinutes = cooldownOverrides[coin.symbol] ?? config.cooldownMinutes;
+    if (cooldownActive(state.lastAlertAt, cooldownMinutes)) continue;
+
+    const direction = changeUsd >= 0 ? 'up' : 'down';
+    toSend.push({
+      coin,
+      price,
+      changeUsd,
+      changePct,
+      direction,
+      alertType: 'threshold',
+      threshold,
+      cooldownRemainingMs: cooldownMinutes * 60 * 1000,
+      compact,
+      channel: thresholdChannel,
+    });
   }
 
-  if (fired || milestoneLevel !== null) {
-    const direction = livePrice >= lastAlertPrice ? 'up' : 'down';
-    const coinForCard = {
-      symbol: coin.symbol,
-      name: coin.name,
-      color: coin.color,
-      isStable: coin.is_stable,
-      milestoneStep: coin.milestone_step,
-    };
-    const alertType = milestoneLevel !== null ? 'milestone' : 'threshold';
+  // Hourly send cap — a safety valve against a flash-crash spamming the
+  // channel every `cooldownMinutes` for hours on end. Trims the queue for
+  // THIS tick only; nothing is lost permanently, coins just wait for the
+  // next tick once the rolling window has room again.
+  const sentLastHour = await alertsLogDb.countLastHour();
+  const room = Math.max(config.maxAlertsPerHour - sentLastHour, 0);
+  let capped = toSend;
+  if (toSend.length > room) {
+    capped = toSend.slice(0, room);
+    if (!capNotifiedThisWindow) {
+      capNotifiedThisWindow = true;
+      await events.record('alert_cap_hit', `${toSend.length} qualified, only ${room} sent (hourly cap ${config.maxAlertsPerHour})`);
+      try {
+        await bot.telegram.sendMessage(
+          config.adminId,
+          `Hourly alert cap (${config.maxAlertsPerHour}) reached — ${toSend.length - room} alert(s) held back this tick.`
+        );
+      } catch {
+        /* non-fatal */
+      }
+    }
+  } else if (room > 0) {
+    capNotifiedThisWindow = false;
+  }
 
-    try {
-      const photo = await cardRenderer.renderCard({
-        coin: coinForCard,
-        price: livePrice,
-        changeUsd,
-        changePct,
-        direction,
-        alertType,
-        milestoneLevel,
-        isBigMilestone,
-      });
-
-      await telegramSender.broadcast(
-        alertType,
-        {
-          coin: coinForCard,
-          price: livePrice,
-          changeUsd,
-          changePct,
-          direction,
-          alertType,
-          milestoneLevel,
-          threshold: { value: coin.threshold_value, type: coin.threshold_type },
-        },
-        photo
+  // Sequential, with a small delay between each — stays comfortably under
+  // Telegram's per-chat rate limit even if every coin alerts in the same
+  // tick, and avoids rendering more than one image in memory at a time.
+  for (const alert of capped) {
+    const sent = await telegramSender.sendAlert(bot.telegram, alert, alert.channel);
+    if (sent) {
+      if (alert.alertType === 'threshold') {
+        await coinStateDb.recordAlert(alert.coin.symbol, alert.price);
+      }
+      await alertsLogDb.record(
+        alert.coin.symbol,
+        alert.price,
+        alert.changeUsd || 0,
+        alert.direction,
+        alert.alertType,
+        alert.channel.name
       );
-    } catch (err) {
-      logger.warn(`Failed to render/send alert for ${coin.symbol}`, { message: err.message });
+      // Automation: any rule watching this trigger fires now, independent
+      // of whether the primary send is the only thing the admin wanted.
+      await rulesEngine.evaluate(bot.telegram, alert);
     }
-
-    await coinsDb.setLastAlertPrice(coin.symbol, livePrice);
+    if (capped.length > 1) {
+      await new Promise((resolve) => setTimeout(resolve, config.sendDelayMs));
+    }
   }
-
-  await coinsDb.setLastPrice(coin.symbol, livePrice);
 }
 
-let binanceDown = false;
-
-async function pollOnce() {
-  const tickStart = Date.now();
-  let priceByPair;
-  let usingFallback = false;
-
+// One full check cycle. Runs sequentially and to completion before the
+// scheduler queues the next tick — see scheduler.js. Always touches the
+// heartbeat on the way out (success, pause, or Binance failure alike) —
+// heartbeatWatchdog.js only cares whether the loop itself is still alive.
+async function tick(bot) {
+  const startedAt = Date.now();
   try {
-    const tickers = await fetchWithMirrors('/api/v3/ticker/price');
-    priceByPair = new Map(tickers.map((t) => [t.symbol, Number(t.price)]));
-    if (binanceDown) {
-      binanceDown = false;
-      logger.info('Binance reachable again — resuming normal polling');
-      telegramSender.notifyOwner('✅ Binance is back — full price polling resumed.').catch(() => {});
-    }
-  } catch (err) {
-    logger.warn('Binance ticker/price fully unreachable, falling back to core coins only', { message: err.message });
-    if (!binanceDown) {
-      binanceDown = true;
-      telegramSender.notifyOwner(
-        `⚠️ Binance is unreachable across all mirrors. Falling back to CoinGecko/Kraken for your ${config.coreCoinSymbols.length} core coins only — everything else is paused until Binance recovers.`
-      ).catch(() => {});
-    }
-    usingFallback = true;
-    priceByPair = null;
-  }
-
-  const coins = await coinsDb.getAll();
-
-  if (usingFallback) {
-    const corePrices = await priceFallback.getCorePrices();
-    for (const coin of coins) {
-      if (!config.coreCoinSymbols.includes(coin.symbol)) continue; // eslint-disable-line no-continue
-      const livePrice = corePrices[coin.symbol];
-      if (livePrice === undefined) continue; // eslint-disable-line no-continue
-      // eslint-disable-next-line no-await-in-loop
-      await checkCoin(coin, livePrice);
-    }
-  } else {
-    for (const coin of coins) {
-      const livePrice = priceByPair.get(coin.binance_pair);
-      if (livePrice === undefined) continue; // eslint-disable-line no-continue
-      // eslint-disable-next-line no-await-in-loop
-      await checkCoin(coin, livePrice);
+    await tickInner(bot);
+  } finally {
+    const tickMs = Date.now() - startedAt;
+    try {
+      await heartbeatDb.touch(tickMs);
+    } catch (err) {
+      logger.warn('Could not update heartbeat', { message: err.message });
     }
   }
-
-  await heartbeatDb.touch(Date.now() - tickStart).catch((err) => logger.warn('Heartbeat touch failed', { message: err.message }));
 }
 
-let pollTimer = null;
-function startPolling() {
-  pollTimer = setInterval(() => {
-    pollOnce().catch((err) => logger.warn('Price poll failed', { message: err.message }));
-  }, config.pollIntervalMs);
-}
-
-function stopPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-}
-
-module.exports = { pollOnce, startPolling, stopPolling, effectiveThreshold };
+module.exports = { tick, coinBySymbol, qualifiesForThresholdAlert, checkMilestone, isWithinQuietHours };

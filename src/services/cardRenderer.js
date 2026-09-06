@@ -310,7 +310,7 @@ async function compositeLogo(base, coin, compact) {
   ]);
 }
 
-// coin: entry from the coins table (db/coins.js)
+// coin: entry from config.coins
 // price: current price (number)
 // changeUsd/changePct/direction: null for stablecoins, or the move since
 //   the last alert for everything else
@@ -327,7 +327,7 @@ async function renderCard({ coin, price, changeUsd, changePct, direction, alertT
     .toBuffer();
 }
 
-// coin: entry from the coins table (db/coins.js), price: number
+// coin: entry from config.coins, price: number
 // stats24h: { priceChangePercent, highPrice, lowPrice } | null (null for stablecoins)
 // candles: [{openTime, close}] oldest->newest, for the sparkline (optional)
 async function renderRichCard({ coin, price, stats24h, candles }) {

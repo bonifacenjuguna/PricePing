@@ -2,19 +2,16 @@ function ts() {
   return new Date().toISOString();
 }
 
-function info(message, meta) {
-  // eslint-disable-next-line no-console
-  console.log(`[${ts()}] INFO  ${message}`, meta || '');
+function info(msg, meta) {
+  console.log(`[${ts()}] INFO  ${msg}`, meta || '');
 }
 
-function warn(message, meta) {
-  // eslint-disable-next-line no-console
-  console.warn(`[${ts()}] WARN  ${message}`, meta || '');
+function warn(msg, meta) {
+  console.warn(`[${ts()}] WARN  ${msg}`, meta || '');
 }
 
-function error(message, meta) {
-  // eslint-disable-next-line no-console
-  console.error(`[${ts()}] ERROR ${message}`, meta || '');
+function error(msg, meta) {
+  console.error(`[${ts()}] ERROR ${msg}`, meta || '');
 }
 
 module.exports = { info, warn, error };

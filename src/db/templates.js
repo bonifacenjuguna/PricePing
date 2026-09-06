@@ -1,24 +1,28 @@
 const { pool } = require('./pool');
 
-// Caption template overrides — key is either "type" (e.g. "threshold") or
-// "type:SYMBOL" (e.g. "threshold:BTC"), matching templateEngine.js's
-// lookup order (symbol-specific, then type-wide, then DEFAULT_TEMPLATES).
-
-async function get(key) {
-  const res = await pool.query('SELECT template FROM templates WHERE key = $1', [key]);
-  return res.rows.length ? res.rows[0].template : null;
+async function get(alertType) {
+  const { rows } = await pool.query('SELECT template FROM caption_templates WHERE alert_type = $1', [alertType]);
+  return rows.length ? rows[0].template : null; // null -> caller falls back to the built-in default
 }
 
-async function set(key, template) {
+async function getAll() {
+  const { rows } = await pool.query('SELECT alert_type, template FROM caption_templates');
+  const map = {};
+  for (const row of rows) map[row.alert_type] = row.template;
+  return map;
+}
+
+async function set(alertType, template) {
   await pool.query(
-    `INSERT INTO templates (key, template) VALUES ($1, $2)
-     ON CONFLICT (key) DO UPDATE SET template = EXCLUDED.template`,
-    [key, template]
+    `INSERT INTO caption_templates (alert_type, template, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (alert_type) DO UPDATE SET template = $2, updated_at = now()`,
+    [alertType, template]
   );
 }
 
-async function reset(key) {
-  await pool.query('DELETE FROM templates WHERE key = $1', [key]);
+async function reset(alertType) {
+  await pool.query('DELETE FROM caption_templates WHERE alert_type = $1', [alertType]);
 }
 
-module.exports = { get, set, reset };
+module.exports = { get, getAll, set, reset };
