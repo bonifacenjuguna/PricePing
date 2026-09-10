@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.3.1
+- Fixed a build-crashing bug in `scripts/prepare-assets.js`: the build-time Postgres pool had no `.on('error', ...)` handler and no connection timeout, so when `DATABASE_URL` wasn't network-reachable during Railway's build step (common — the Postgres plugin isn't always wired to the build container the same way it is at runtime), the pool's background error event went unhandled and crashed the entire build, not just the asset step. Fixed by adding `connectionTimeoutMillis: 5000`, an error handler that logs instead of crashing, and wrapping the table-creation queries in try/catch so a failed DB connection falls through to local-file-only asset prep (skips the Postgres blob upload, keeps everything else working) instead of aborting the deploy. Confirmed working on a live Railway deploy.
+
 ## v0.3.0
 - Font pipeline added: Inter Regular/Bold downloaded at build time (rsms/inter GitHub source), stored as Postgres blobs, synced to local disk on boot — same resilience pattern as the logo pipeline (graceful fallback to system default font if unavailable)
 - Digest-mode batching fully wired: threshold/milestone alerts on digest-enabled channels now queue in Redis and flush as one combined summary message on the channel's own interval, holding through quiet hours instead of dropping

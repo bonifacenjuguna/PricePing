@@ -1,6 +1,6 @@
 {
   "name": "crypto-menu-bot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Telegram menu bot for crypto prices, charts, milestones and threshold alerts",
   "main": "src/index.js",
   "scripts": {
