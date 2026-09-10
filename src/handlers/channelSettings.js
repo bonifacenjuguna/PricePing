@@ -15,7 +15,7 @@ async function showChannelSettings(ctx, channelId) {
   navStack.push(ctx, 'channelSettings', { channelId });
   const channel = await channelsDb.getById(channelId);
   if (!channel) {
-    return safeEdit(ctx, '⚠️ This screen applies to a channel the bot has posting rights in. Add the bot as admin to a channel first — see Help.', Markup.inlineKeyboard([navRow()]));
+    return safeEdit(ctx, '⚠️ Add me to a channel first.', Markup.inlineKeyboard([[callback('📡 Manage Channels', 'managechannels:show')], navRow()]));
   }
 
   const quietLabel = channel.quiet_hours_start === null || channel.quiet_hours_start === undefined

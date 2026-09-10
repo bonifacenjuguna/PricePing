@@ -15,6 +15,7 @@ const bulkActionsHandler = require('./handlers/bulkActions');
 const chartsHandler = require('./handlers/charts');
 const fearGreedHandler = require('./handlers/fearGreed');
 const channelsHandler = require('./handlers/channels');
+const manageChannelsHandler = require('./handlers/manageChannels');
 const manualPostHandler = require('./handlers/manualPost');
 
 // Resolves "which channel's settings is this user editing" when a callback
@@ -143,6 +144,12 @@ async function routeCallback(ctx, data) {
     return undefined;
   }
 
+  // --- Manage channels: add-to-channel deep link + list of registered channels ---
+  if (ns === 'managechannels') {
+    if (action === 'show') return manageChannelsHandler.showManageChannels(ctx);
+    return undefined;
+  }
+
   // --- Coin list: pagination lands here since `page` is embedded as a
   // literal token by keyboards/pagination.js (prefix:page:N) ---
   if (ns === 'coinlist') {
@@ -180,6 +187,7 @@ async function routeCallback(ctx, data) {
     if (action === 'open') return coinPanelHandler.showCoinPanel(ctx, symbol, channelId);
     if (action === 'mute') return coinPanelHandler.toggleMute(ctx, symbol, channelId);
     if (action === 'watchlist') return coinPanelHandler.toggleWatchlist(ctx, symbol, channelId);
+    if (action === 'card') return coinPanelHandler.sendPreviewCard(ctx, symbol, channelId);
     if (action === 'threshold') return coinPanelHandler.promptForInput(ctx, 'threshold', symbol, channelId);
     if (action === 'milestone') return coinPanelHandler.promptForInput(ctx, 'milestone', symbol, channelId);
     if (action === 'cooldown') return coinPanelHandler.promptForInput(ctx, 'cooldown', symbol, channelId);
@@ -256,6 +264,8 @@ async function renderScreen(ctx, { screen, params }) {
       return timezoneHandler.showTimezone(ctx);
     case 'channelSettings':
       return channelSettingsHandler.showChannelSettings(ctx, params.channelId);
+    case 'manageChannels':
+      return manageChannelsHandler.showManageChannels(ctx);
     case 'postChannelPicker':
       return manualPostHandler.showChannelPicker(ctx);
     case 'postChannelPickerForCoin':

@@ -23,8 +23,8 @@ async function showChannelPicker(ctx) {
   if (!channels.length) {
     await safeEdit(
       ctx,
-      '📢 *Post to Channel*\n\nNo channels yet. Add this bot as an admin to a channel first — it registers automatically once promoted.',
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([navRow()]) }
+      '📢 *Post to Channel*\n\nNo channels yet — add me to one first.',
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[callback('📡 Manage Channels', 'managechannels:show')], navRow()]) }
     );
     return;
   }
@@ -111,8 +111,8 @@ async function showChannelPickerForCoin(ctx, symbol) {
   if (!channels.length) {
     await safeEdit(
       ctx,
-      `📢 *Post ${coin.symbol}*\n\nNo channels yet. Add this bot as an admin to a channel first — it registers automatically once promoted.`,
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([navRow()]) }
+      `📢 *Post ${coin.symbol}*\n\nNo channels yet — add me to one first.`,
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[callback('📡 Manage Channels', 'managechannels:show')], navRow()]) }
     );
     return;
   }

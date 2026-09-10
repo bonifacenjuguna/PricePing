@@ -11,6 +11,7 @@ const poller = require('./services/poller');
 const digestScheduler = require('./services/digestScheduler');
 const { createBot } = require('./bot');
 const { createApp } = require('./server/app');
+const botInfo = require('./lib/botInfo');
 
 const SHUTDOWN_STEP_TIMEOUT_MS = 5000;
 const SHUTDOWN_HARD_DEADLINE_MS = 15000;
@@ -99,6 +100,17 @@ async function main() {
   }
 
   bot = createBot();
+
+  try {
+    const me = await bot.telegram.getMe();
+    botInfo.set(me.username);
+    logger.info('Bot identity resolved', { username: me.username });
+  } catch (err) {
+    // Not fatal — the add-to-channel deep link just won't render its URL
+    // button correctly until this resolves on a later call; everything
+    // else about the bot still works fine without it.
+    logger.warn('Could not resolve bot username via getMe()', { message: err.message });
+  }
 
   const app = createApp();
   httpServer = app.listen(config.PORT, () => {

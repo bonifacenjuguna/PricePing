@@ -2,10 +2,12 @@ const { Markup } = require('telegraf');
 const { bySymbol } = require('../coins');
 const coinSettingsDb = require('../db/coinSettings');
 const marketData = require('../services/marketData');
+const cardRenderer = require('../services/cardRenderer');
 const format = require('../lib/format');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit } = require('../lib/ephemeral');
 const navStack = require('../lib/navStack');
+const logger = require('../lib/logger');
 
 // channelId: which channel's settings we're editing (for now, in a DM
 // context this would be the user's own "personal" pseudo-channel row —
@@ -41,6 +43,7 @@ async function showCoinPanel(ctx, symbol, channelId) {
     [callback('⏱ Edit Cooldown', `coinpanel:cooldown:${symbol}:${channelId}`)],
     [callback(settings.onWatchlist ? '⭐ Remove from Watchlist' : '☆ Add to Watchlist', `coinpanel:watchlist:${symbol}:${channelId}`)],
     [callback('📈 View Chart', `chart:open:${symbol}`)],
+    [callback('📇 Get Price Card', `coinpanel:card:${symbol}:${channelId}`)],
     [callback('📢 Post This to a Channel', `manualpost:coinselected:${symbol}`)],
     navRow(),
   ];
@@ -60,6 +63,35 @@ async function toggleWatchlist(ctx, symbol, channelId) {
   const current = settingsMap.get(symbol);
   await coinSettingsDb.upsert(channelId, symbol, { onWatchlist: !current.onWatchlist });
   await showCoinPanel(ctx, symbol, channelId);
+}
+
+// Renders the current card and sends it straight to the user's own DM —
+// no channel required. This is the fastest way to actually see what a
+// card looks like: preview it here first, then decide whether/where to
+// post it for real via "Post This to a Channel".
+async function sendPreviewCard(ctx, symbol, channelId) {
+  const coin = bySymbol.get(symbol);
+  try {
+    await ctx.answerCbQuery('Rendering…').catch(() => {});
+    const usersDb = require('../db/users');
+    const { pool } = require('../db/postgres');
+    const { rows } = await pool.query('SELECT card_style FROM users WHERE telegram_id = $1', [ctx.from.id]);
+    const cardStyle = (rows[0] && rows[0].card_style) || 'compact';
+
+    const prices = await marketData.fetchAllPrices();
+    const priceInfo = prices[symbol];
+    if (!priceInfo) {
+      await ctx.reply(`⚠️ No live price available for ${symbol} right now.`);
+      return;
+    }
+    const buffer = await cardRenderer.renderCard({
+      coin, price: priceInfo.price, direction: null, alertType: 'manual', mode: cardStyle,
+    });
+    await ctx.replyWithPhoto({ source: buffer }, { caption: `${coin.name} — $${format.formatPrice(priceInfo.price)} (preview, ${cardStyle})` });
+  } catch (err) {
+    logger.error('Card preview failed', { symbol, message: err.message });
+    await ctx.reply('⚠️ Could not render a preview right now — try again shortly.');
+  }
 }
 
 // Threshold/milestone/cooldown numeric edits are collected via a "type a
@@ -127,4 +159,4 @@ async function applyInput(ctx, text) {
   return true;
 }
 
-module.exports = { showCoinPanel, toggleMute, toggleWatchlist, promptForInput, applyInput };
+module.exports = { showCoinPanel, toggleMute, toggleWatchlist, sendPreviewCard, promptForInput, applyInput };
