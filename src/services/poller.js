@@ -1,165 +1,164 @@
+// Runs on a timer (see index.js). For every active channel, checks every
+// coin's current price against that channel's milestone step and threshold
+// config, and sends alert cards for anything that qualifies. Two
+// independent trigger systems sharing one card renderer, same architecture
+// reviewed from PricePing:
+//   milestone: price crosses into a new step-multiple band since the last
+//     alerted band. Own natural cooldown (price must move a full step).
+//   threshold: price has moved >= X% or $Y since the last alert, AND the
+//     per-coin cooldown has elapsed.
 const config = require('../config');
-const logger = require('../utils/logger');
-const coinsDb = require('../db/coins');
-const modes = require('./modes');
+const { coins, bySymbol } = require('../coins');
+const channelsDb = require('../db/channels');
+const coinSettingsDb = require('../db/coinSettings');
+const coinStateDb = require('../db/coinState');
+const marketData = require('./marketData');
 const cardRenderer = require('./cardRenderer');
-const telegramSender = require('./telegramSender');
-const { fetchWithMirrors } = require('./binanceClient');
-const priceFallback = require('./priceFallback');
-const heartbeatDb = require('../db/heartbeat');
+const digestQueue = require('./digestQueue');
+const adminNotify = require('./adminNotify');
+const tz = require('../lib/timezone');
+const logger = require('../lib/logger');
 
-// Effective threshold for a coin right now = its tier/override base value,
-// scaled by the current Bot Mode's multiplier. Nitro (0.25x) fires far more
-// often than Anti-Spam (2x) off the exact same base number.
-async function effectiveThreshold(coin) {
-  const mode = await modes.getCurrentMode();
-  return coin.threshold_value * mode.multiplier;
+function isWithinQuietHours(hour, start, end) {
+  if (start === null || start === undefined || end === null || end === undefined) return false;
+  if (start === end) return false;
+  if (start < end) return hour >= start && hour < end;
+  return hour >= start || hour < end; // wraps past midnight
 }
 
-function pctChange(oldPrice, newPrice) {
-  if (!Number.isFinite(oldPrice) || oldPrice === 0) return null;
-  return ((newPrice - oldPrice) / oldPrice) * 100;
+function checkMilestone(price, step, lastMilestone) {
+  if (!step) return null;
+  const level = Math.floor(price / step) * step;
+  if (lastMilestone === null || lastMilestone === undefined) return { seedOnly: true, level };
+  if (level === lastMilestone) return null;
+  return { seedOnly: false, level, direction: level > lastMilestone ? 'up' : 'down' };
 }
 
-async function checkCoin(coin, livePrice) {
-  if (coin.muted || coin.is_stable) {
-    await coinsDb.setLastPrice(coin.symbol, livePrice);
+function qualifiesForThreshold(price, baseline, thresholdType, thresholdValue) {
+  if (!thresholdValue) return { qualifies: false };
+  const changeUsd = price - baseline;
+  const changePct = (changeUsd / baseline) * 100;
+  const moveSize = thresholdType === 'pct' ? Math.abs(changePct) : Math.abs(changeUsd);
+  return { qualifies: moveSize >= thresholdValue, changeUsd, changePct };
+}
+
+function cooldownActive(lastAlertAt, cooldownMinutes) {
+  if (!lastAlertAt) return false;
+  return Date.now() - new Date(lastAlertAt).getTime() < cooldownMinutes * 60 * 1000;
+}
+
+// Delivery: digest-mode channels queue the alert for the digest scheduler
+// to batch and flush later (see digestScheduler.js); regular channels get
+// an immediate rendered card. Both paths funnel through here so the
+// trigger-detection logic above doesn't need to know or care which mode
+// the channel is in.
+async function deliverAlert(bot, channel, alertType, entry) {
+  if (channel.digest_mode) {
+    await digestQueue.enqueue(channel.id, { alertType, ...entry });
     return;
   }
-
-  const lastAlertPrice = coin.last_alert_price !== null ? Number(coin.last_alert_price) : livePrice;
-  const changePct = pctChange(lastAlertPrice, livePrice);
-  const changeUsd = livePrice - lastAlertPrice;
-  const threshold = await effectiveThreshold(coin);
-
-  let fired = false;
-
-  if (coin.threshold_type === 'pct' && changePct !== null && Math.abs(changePct) >= threshold) {
-    fired = true;
-  } else if (coin.threshold_type === 'usd' && Math.abs(changeUsd) >= threshold) {
-    fired = true;
-  }
-
-  // Milestone check — crossing a round-number step, independent of the
-  // threshold move above.
-  let milestoneLevel = null;
-  let isBigMilestone = false;
-  if (coin.milestone_step) {
-    const step = Number(coin.milestone_step);
-    const prevMilestone = Math.floor(lastAlertPrice / step);
-    const newMilestone = Math.floor(livePrice / step);
-    if (newMilestone !== prevMilestone && newMilestone > 0) {
-      milestoneLevel = newMilestone * step;
-      isBigMilestone = newMilestone % 10 === 0;
-    }
-  }
-
-  if (fired || milestoneLevel !== null) {
-    const direction = livePrice >= lastAlertPrice ? 'up' : 'down';
-    const coinForCard = {
-      symbol: coin.symbol,
-      name: coin.name,
-      color: coin.color,
-      isStable: coin.is_stable,
-      milestoneStep: coin.milestone_step,
-    };
-    const alertType = milestoneLevel !== null ? 'milestone' : 'threshold';
-
-    try {
-      const photo = await cardRenderer.renderCard({
-        coin: coinForCard,
-        price: livePrice,
-        changeUsd,
-        changePct,
-        direction,
-        alertType,
-        milestoneLevel,
-        isBigMilestone,
-      });
-
-      await telegramSender.broadcast(
-        alertType,
-        {
-          coin: coinForCard,
-          price: livePrice,
-          changeUsd,
-          changePct,
-          direction,
-          alertType,
-          milestoneLevel,
-          threshold: { value: coin.threshold_value, type: coin.threshold_type },
-        },
-        photo
-      );
-    } catch (err) {
-      logger.warn(`Failed to render/send alert for ${coin.symbol}`, { message: err.message });
-    }
-
-    await coinsDb.setLastAlertPrice(coin.symbol, livePrice);
-  }
-
-  await coinsDb.setLastPrice(coin.symbol, livePrice);
-}
-
-let binanceDown = false;
-
-async function pollOnce() {
-  const tickStart = Date.now();
-  let priceByPair;
-  let usingFallback = false;
-
+  const { coin, price, direction, changePct, milestoneLevel, isBigMilestone } = entry;
   try {
-    const tickers = await fetchWithMirrors('/api/v3/ticker/price');
-    priceByPair = new Map(tickers.map((t) => [t.symbol, Number(t.price)]));
-    if (binanceDown) {
-      binanceDown = false;
-      logger.info('Binance reachable again — resuming normal polling');
-      telegramSender.notifyOwner('✅ Binance is back — full price polling resumed.').catch(() => {});
-    }
+    const buffer = await cardRenderer.renderCard({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone, mode: channel.card_style || 'compact' });
+    const caption = alertType === 'milestone'
+      ? `${isBigMilestone ? '🎉 ' : ''}${coin.name} just crossed $${milestoneLevel.toLocaleString()}`
+      : `${coin.name} ${direction === 'up' ? '📈' : '📉'} ${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
+    await bot.telegram.sendPhoto(channel.chat_id, { source: buffer }, { caption });
   } catch (err) {
-    logger.warn('Binance ticker/price fully unreachable, falling back to core coins only', { message: err.message });
-    if (!binanceDown) {
-      binanceDown = true;
-      telegramSender.notifyOwner(
-        `⚠️ Binance is unreachable across all mirrors. Falling back to CoinGecko/Kraken for your ${config.coreCoinSymbols.length} core coins only — everything else is paused until Binance recovers.`
-      ).catch(() => {});
-    }
-    usingFallback = true;
-    priceByPair = null;
+    logger.error('Failed to send alert card', { channelId: channel.id, symbol: coin.symbol, message: err.message });
   }
+}
 
-  const coins = await coinsDb.getAll();
+async function tickChannel(bot, channel) {
+  const now = new Date();
+  const hourLocal = tz.getHourInZone(now, channel.timezone || 'UTC');
+  // Quiet hours suppress immediate sends entirely for normal channels. For
+  // digest channels, quiet hours are enforced at FLUSH time instead (see
+  // digestScheduler.js) — detection here still queues normally so nothing
+  // that happened during quiet hours is lost, just held until it's over.
+  const quietNow = !channel.digest_mode && isWithinQuietHours(hourLocal, channel.quiet_hours_start, channel.quiet_hours_end);
 
-  if (usingFallback) {
-    const corePrices = await priceFallback.getCorePrices();
-    for (const coin of coins) {
-      if (!config.coreCoinSymbols.includes(coin.symbol)) continue; // eslint-disable-line no-continue
-      const livePrice = corePrices[coin.symbol];
-      if (livePrice === undefined) continue; // eslint-disable-line no-continue
-      // eslint-disable-next-line no-await-in-loop
-      await checkCoin(coin, livePrice);
+  const [coinSettings, coinStates, prices] = await Promise.all([
+    coinSettingsDb.getAllForChannel(channel.id),
+    coinStateDb.getAllForChannel(channel.id),
+    marketData.fetchAllPrices(),
+  ]);
+
+  for (const coin of coins) {
+    const priceInfo = prices[coin.symbol];
+    if (!priceInfo) continue; // eslint-disable-line no-continue
+    const { price, fetchedAt } = priceInfo;
+    if (marketData.isStale(fetchedAt)) continue; // eslint-disable-line no-continue
+
+    const settings = coinSettings.get(coin.symbol);
+    const state = coinStates.get(coin.symbol) || {};
+
+    await coinStateDb.updateLastPrice(channel.id, coin.symbol, price);
+    if (settings.muted || coin.isStable) continue; // eslint-disable-line no-continue
+
+    // ---- Milestone check ----
+    if (settings.milestoneStep && !settings.milestoneDisabled) {
+      const milestone = checkMilestone(price, settings.milestoneStep, state.lastMilestone);
+      if (milestone) {
+        await coinStateDb.setLastMilestone(channel.id, coin.symbol, milestone.level);
+        if (!milestone.seedOnly && !quietNow) {
+          // eslint-disable-next-line no-await-in-loop
+          const confirmed = await marketData.confirmPrice(coin.symbol, price);
+          if (confirmed) {
+            const isBigMilestone = Math.abs(milestone.level / (settings.milestoneStep * 10)) % 1 < 1e-9;
+            // eslint-disable-next-line no-await-in-loop
+            await deliverAlert(bot, channel, 'milestone', {
+              coin, symbol: coin.symbol, price, direction: milestone.direction, milestoneLevel: milestone.level, isBigMilestone,
+            });
+          } else {
+            logger.warn('Milestone sanity check failed — suppressed a likely false alert', { symbol: coin.symbol, channelId: channel.id, price });
+          }
+        }
+      }
     }
-  } else {
-    for (const coin of coins) {
-      const livePrice = priceByPair.get(coin.binance_pair);
-      if (livePrice === undefined) continue; // eslint-disable-line no-continue
+
+    // ---- Threshold check ----
+    if (state.lastAlertPrice === null || state.lastAlertPrice === undefined) {
       // eslint-disable-next-line no-await-in-loop
-      await checkCoin(coin, livePrice);
+      const seeded = await coinStateDb.seedBaselineIfMissing(channel.id, coin.symbol, price);
+      if (seeded) continue; // eslint-disable-line no-continue
+    }
+    if (quietNow) continue; // eslint-disable-line no-continue
+
+    const cooldownMinutes = settings.cooldownMinutes ?? config.DEFAULT_COOLDOWN_MINUTES;
+    if (cooldownActive(state.lastAlertAt, cooldownMinutes)) continue; // eslint-disable-line no-continue
+
+    const { qualifies, changeUsd, changePct } = qualifiesForThreshold(price, state.lastAlertPrice, settings.thresholdType, settings.thresholdValue);
+    if (!qualifies) continue; // eslint-disable-line no-continue
+
+    // eslint-disable-next-line no-await-in-loop
+    await coinStateDb.recordAlert(channel.id, coin.symbol, price);
+    const direction = changeUsd >= 0 ? 'up' : 'down';
+    // eslint-disable-next-line no-await-in-loop
+    await deliverAlert(bot, channel, 'threshold', { coin, symbol: coin.symbol, price, direction, changePct });
+  }
+}
+
+async function tick(bot) {
+  let channels;
+  try {
+    channels = await channelsDb.getActiveChannels();
+  } catch (err) {
+    logger.error('Poller could not load channels', { message: err.message });
+    return;
+  }
+  for (const channel of channels) {
+    // eslint-disable-next-line no-await-in-loop
+    try {
+      await tickChannel(bot, channel);
+    } catch (err) {
+      logger.error('Poller tick failed for channel', { channelId: channel.id, message: err.message });
+      if (err.shouldNotifyAdmin) {
+        // eslint-disable-next-line no-await-in-loop
+        await adminNotify.notifyAdmin(bot, `⚠️ ${err.sourceName} has failed repeatedly. Alerts may be degraded until it recovers.`);
+      }
     }
   }
-
-  await heartbeatDb.touch(Date.now() - tickStart).catch((err) => logger.warn('Heartbeat touch failed', { message: err.message }));
 }
 
-let pollTimer = null;
-function startPolling() {
-  pollTimer = setInterval(() => {
-    pollOnce().catch((err) => logger.warn('Price poll failed', { message: err.message }));
-  }, config.pollIntervalMs);
-}
-
-function stopPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-}
-
-module.exports = { pollOnce, startPolling, stopPolling, effectiveThreshold };
+module.exports = { tick, checkMilestone, qualifiesForThreshold, isWithinQuietHours };

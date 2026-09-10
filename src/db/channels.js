@@ -1,90 +1,40 @@
-const { pool } = require('./pool');
+const { pool } = require('./postgres');
 
-// `channels` table already existed (name, chat_id, is_default) — extended
-// with `channel_post_types` (new in v1.0.0) for the per-channel per-post-
-// type opt-out. Every post type defaults to enabled for a brand-new
-// channel (see addChannel below) — an owner opts a channel OUT of noise,
-// rather than having to opt every channel IN to everything.
-
-const POST_TYPES = ['threshold', 'milestone', 'manual', 'chart', 'movers', 'feargreed', 'digest'];
-
-async function getAll() {
-  const res = await pool.query('SELECT * FROM channels ORDER BY is_default DESC, name ASC');
-  return res.rows;
-}
-
-async function getPrimary() {
-  const res = await pool.query('SELECT * FROM channels WHERE is_default = true LIMIT 1');
-  return res.rows[0] || null;
-}
-
-async function get(name) {
-  const res = await pool.query('SELECT * FROM channels WHERE name = $1', [name]);
-  return res.rows[0] || null;
-}
-
-async function addChannel(name, chatId) {
-  await pool.query(
-    `INSERT INTO channels (name, chat_id, is_default) VALUES ($1, $2, false)
-     ON CONFLICT (name) DO UPDATE SET chat_id = EXCLUDED.chat_id`,
-    [name, chatId]
+async function addChannel(chatId, title, addedBy) {
+  const { rows } = await pool.query(
+    `INSERT INTO channels (chat_id, title, added_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (chat_id) DO UPDATE SET title = $2, is_active = true
+     RETURNING *`,
+    [chatId, title, addedBy]
   );
-  for (const postType of POST_TYPES) {
-    await pool.query(
-      `INSERT INTO channel_post_types (channel_name, post_type, enabled) VALUES ($1, $2, true)
-       ON CONFLICT (channel_name, post_type) DO NOTHING`,
-      [name, postType]
-    );
-  }
+  return rows[0];
 }
 
-// The primary channel (is_default = true) can never be removed via this —
-// callers must check isDefault before offering the button at all.
-async function removeChannel(name) {
-  const channel = await get(name);
-  if (channel && channel.is_default) {
-    throw new Error('The primary channel cannot be removed.');
-  }
-  await pool.query('DELETE FROM channel_post_types WHERE channel_name = $1', [name]);
-  await pool.query('DELETE FROM channels WHERE name = $1', [name]);
+async function removeChannel(chatId) {
+  await pool.query('UPDATE channels SET is_active = false WHERE chat_id = $1', [chatId]);
 }
 
-async function getPostTypeToggles(name) {
-  const res = await pool.query('SELECT post_type, enabled FROM channel_post_types WHERE channel_name = $1', [name]);
-  const map = {};
-  for (const t of POST_TYPES) map[t] = true; // default on if row missing (e.g. primary channel, seeded at migration time)
-  for (const row of res.rows) map[row.post_type] = row.enabled;
-  return map;
+async function getActiveChannels() {
+  const { rows } = await pool.query('SELECT * FROM channels WHERE is_active = true');
+  return rows;
 }
 
-async function setPostTypeEnabled(name, postType, enabled) {
-  await pool.query(
-    `INSERT INTO channel_post_types (channel_name, post_type, enabled) VALUES ($1, $2, $3)
-     ON CONFLICT (channel_name, post_type) DO UPDATE SET enabled = EXCLUDED.enabled`,
-    [name, postType, enabled]
-  );
+async function getById(id) {
+  const { rows } = await pool.query('SELECT * FROM channels WHERE id = $1', [id]);
+  return rows[0] || null;
 }
 
-// Channels that currently have a given post type enabled — what
-// telegramSender.js actually broadcasts to for that post.
-async function getChannelsForPostType(postType) {
-  const all = await getAll();
-  const out = [];
-  for (const channel of all) {
-    const toggles = await getPostTypeToggles(channel.name);
-    if (toggles[postType]) out.push(channel);
-  }
-  return out;
+async function setDigestMode(id, enabled, intervalMinutes) {
+  await pool.query('UPDATE channels SET digest_mode = $1, digest_interval_minutes = COALESCE($2, digest_interval_minutes) WHERE id = $3', [enabled, intervalMinutes, id]);
 }
 
-module.exports = {
-  POST_TYPES,
-  getAll,
-  getPrimary,
-  get,
-  addChannel,
-  removeChannel,
-  getPostTypeToggles,
-  setPostTypeEnabled,
-  getChannelsForPostType,
-};
+async function setQuietHours(id, start, end) {
+  await pool.query('UPDATE channels SET quiet_hours_start = $1, quiet_hours_end = $2 WHERE id = $3', [start, end, id]);
+}
+
+async function setTimezone(id, tz) {
+  await pool.query('UPDATE channels SET timezone = $1 WHERE id = $2', [tz, id]);
+}
+
+module.exports = { addChannel, removeChannel, getActiveChannels, getById, setDigestMode, setQuietHours, setTimezone };

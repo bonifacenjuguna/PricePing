@@ -1,50 +1,50 @@
+// Adaptive memory watchdog. Checks RSS against a configurable ceiling
+// (comfortably under Railway's actual container limit) and triggers the
+// SAME clean shutdown path as a real SIGTERM when crossed — never a raw
+// crash. Cadence adapts: fast checks for the first 2 minutes after boot
+// and whenever RSS is within 20% of the ceiling (danger zone), slower
+// otherwise — so a sudden spike gets caught quickly without polling
+// constantly during normal, healthy operation.
 const config = require('../config');
-const logger = require('../utils/logger');
-const events = require('../db/events');
+const logger = require('../lib/logger');
 
-let intervalHandle = null;
+const FAST_INTERVAL_MS = 5000;
+const BOOT_GRACE_MS = 2 * 60 * 1000;
+const DANGER_ZONE_RATIO = 0.8; // RSS within 20% of ceiling
+const WARNING_RATIO = 0.8;
+const WARNING_LOG_INTERVAL_MS = 60 * 1000;
 
-// Same design as the original: warn, log an audit event, DM the admin,
-// then exit(1) so Railway's restartPolicy (see railway.json,
-// ON_FAILURE / max 10 retries) relaunches us cleanly — a controlled
-// restart on our terms beats waiting for Railway's OOM killer to do it
-// on theirs.
-//
-// One real fix vs. the original: measures `rss` (total resident memory —
-// what Railway's container limit actually checks against), not
-// `heapUsed` (V8 heap only). sharp's image buffers for logo/card/chart
-// rendering live in native memory OUTSIDE the V8 heap, so heapUsed alone
-// was blind to the single biggest memory consumer in this bot.
-function init(bot) {
-  const limitBytes = config.memoryLimitMb * 1024 * 1024;
-  const warnBytes = limitBytes * config.memoryWarnRatio;
+let lastWarningAt = 0;
 
-  intervalHandle = setInterval(async () => {
-    const usage = process.memoryUsage();
-    if (usage.rss < warnBytes) return;
+function start(onCeilingCrossed) {
+  const bootTime = Date.now();
+  const ceilingBytes = config.MEMORY_WATCHDOG_MB * 1024 * 1024;
 
-    const usedMb = Math.round(usage.rss / 1024 / 1024);
-    logger.warn(`Memory usage high: ${usedMb}MB / ${config.memoryLimitMb}MB limit (rss)`);
+  function checkOnce() {
+    const rss = process.memoryUsage().rss;
+    const ratio = rss / ceilingBytes;
 
-    await events.record('memory_restart', `RSS at ${usedMb}MB, restarting gracefully`);
-
-    try {
-      await bot.telegram.sendMessage(
-        config.adminId,
-        `⚠️ Memory watchdog: RSS hit ${usedMb}MB of the ${config.memoryLimitMb}MB limit. ` +
-          `Restarting now to stay healthy — back in a few seconds.`
-      );
-    } catch (err) {
-      logger.warn('Could not notify admin before memory restart', { message: err.message });
+    if (ratio >= 1) {
+      logger.error('Memory ceiling crossed — triggering clean shutdown', {
+        rssMb: Math.round(rss / 1024 / 1024),
+        ceilingMb: config.MEMORY_WATCHDOG_MB,
+      });
+      onCeilingCrossed();
+      return; // stop scheduling further checks; shutdown is in progress
     }
 
-    clearInterval(intervalHandle);
-    process.exit(1);
-  }, config.memoryCheckIntervalMs);
+    if (ratio >= WARNING_RATIO && Date.now() - lastWarningAt > WARNING_LOG_INTERVAL_MS) {
+      lastWarningAt = Date.now();
+      logger.warn('Memory approaching ceiling', { rssMb: Math.round(rss / 1024 / 1024), ceilingMb: config.MEMORY_WATCHDOG_MB, ratio: ratio.toFixed(2) });
+    }
+
+    const inBootGrace = Date.now() - bootTime < BOOT_GRACE_MS;
+    const inDangerZone = ratio >= DANGER_ZONE_RATIO;
+    const nextInterval = inBootGrace || inDangerZone ? FAST_INTERVAL_MS : config.MEMORY_WATCHDOG_CHECK_INTERVAL_MS;
+    setTimeout(checkOnce, nextInterval);
+  }
+
+  setTimeout(checkOnce, FAST_INTERVAL_MS);
 }
 
-function stop() {
-  if (intervalHandle) clearInterval(intervalHandle);
-}
-
-module.exports = { init, stop };
+module.exports = { start };
