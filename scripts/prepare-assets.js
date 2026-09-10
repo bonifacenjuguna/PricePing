@@ -10,10 +10,9 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
-const { coins, logosDir, fontsDir } = require('../src/coins');
+const { coins, logosDir } = require('../src/coins');
 const coingecko = require('../src/services/sources/coingecko');
 const { resolveLogoPng } = require('../src/lib/logoFetch');
-const { fetchAllFonts } = require('../src/lib/fontFetch');
 
 async function main() {
   fs.mkdirSync(logosDir, { recursive: true });
@@ -99,25 +98,25 @@ async function main() {
 }
 
 async function prepareFonts(pool) {
-  fs.mkdirSync(fontsDir, { recursive: true });
-  console.log(`\nPreparing fonts...`);
-  const results = await fetchAllFonts();
-  for (const { file, buffer, ok, reason } of results) {
-    if (!ok) {
-      console.warn(`  [${file}] download failed (${reason}) — cards will fall back to the system default font for this weight.`);
-      continue; // eslint-disable-line no-continue
-    }
-    fs.writeFileSync(path.join(fontsDir, file), buffer);
-    if (pool) {
-      await pool.query(
-        `INSERT INTO fonts (filename, font_data, updated_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (filename) DO UPDATE SET font_data = $2, updated_at = now()`,
-        [file, buffer]
-      );
-    }
-    console.log(`  [${file}] OK`);
-  }
+  // Deliberately NOT attempting a network download here anymore. The
+  // previous version fetched Inter-Regular.ttf from rsms/inter's GitHub
+  // "docs/font-files" path — which turned out to only contain .woff2
+  // files, so every download silently 404'd, the fonts table stayed
+  // permanently empty, and — critically — Railway's minimal container has
+  // NO system font installed either, so text rendering had nowhere to
+  // fall back to. That produced blank/tofu-box text on every card and
+  // chart in production.
+  //
+  // The real fix lives in nixpacks.toml: it installs the `inter` and
+  // `dejavu_fonts` packages at the OS level via Nix, which fontconfig (and
+  // therefore librsvg, which sharp uses to rasterize our SVGs) resolves
+  // automatically — no download, no Postgres blob, no possible 404. This
+  // function is kept as a no-op placeholder (rather than deleted outright)
+  // in case a verified, stable font URL is ever worth adding as a bonus
+  // embedded layer on top of the system font — see FONT_FACES() in
+  // src/lib/fonts.js, which already handles "no local font files found"
+  // gracefully and costs nothing when unused.
+  console.log('\nSkipping font download — fonts are provided by nixpacks.toml (inter + dejavu_fonts) instead. See comment in this function for why.');
 }
 
 main().catch((err) => {

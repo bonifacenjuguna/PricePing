@@ -90,7 +90,7 @@ function buildBadge({ width, direction, alertType, changePct, milestoneLevel, is
   const rectShape = ({ dx, dy, fill, opacity }) => `<rect x="${x + dx}" y="${46 + dy}" width="${w}" height="${h}" rx="${h / 2}" fill="${fill}" opacity="${opacity}" />`;
   const svg = `
     ${shapeWithShadow(rectShape, { fill: badgeColor })}
-    <text x="${x + w / 2}" y="${46 + h / 2 + 10}" font-family="Inter, sans-serif" font-size="${fontSize}" font-weight="700"
+    <text x="${x + w / 2}" y="${46 + h / 2 + 10}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="${fontSize}" font-weight="700"
           fill="#FFFFFF" text-anchor="middle">${escapeXml(text)}</text>`;
   return { svg, width: w };
 }
@@ -111,8 +111,8 @@ function buildCompactSvg({ coin, price, direction, alertType, changePct, milesto
   <circle cx="${logoCx}" cy="${logoCy}" r="${LOGO_R_COMPACT * 1.6}" fill="url(#logoGlow)" />
   ${shapeWithShadow(logoCircle, { fill: '#FFFFFF', shadowOpacity: 0.28 })}
   ${badge.svg}
-  ${textWithShadow(logoCx + LOGO_R_COMPACT + 50, COMPACT_HEIGHT / 2 + 5, `font-family="Inter, sans-serif" font-size="96" font-weight="700"`, textColor, escapeXml(priceStr))}
-  <text x="${COMPACT_WIDTH - 50}" y="${COMPACT_HEIGHT - 34}" font-family="Inter, sans-serif" font-size="26" font-weight="700"
+  ${textWithShadow(logoCx + LOGO_R_COMPACT + 50, COMPACT_HEIGHT / 2 + 5, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="96" font-weight="700"`, textColor, escapeXml(priceStr))}
+  <text x="${COMPACT_WIDTH - 50}" y="${COMPACT_HEIGHT - 34}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" font-weight="700"
         fill="${textColor}" text-anchor="end" opacity="0.9">${escapeXml(coin.symbol)}</text>
 </svg>`;
 }
@@ -130,10 +130,10 @@ function buildLooseSvg({ coin, price, direction, alertType, changePct, milestone
   let statsRow = '';
   if (stats24h) {
     statsRow = `
-      <text x="100" y="470" font-family="Inter, sans-serif" font-size="24" fill="${statLabelColor}">24h High</text>
-      <text x="100" y="504" font-family="Inter, sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.highPrice)}</text>
-      <text x="330" y="470" font-family="Inter, sans-serif" font-size="24" fill="${statLabelColor}">24h Low</text>
-      <text x="330" y="504" font-family="Inter, sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.lowPrice)}</text>`;
+      <text x="100" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" fill="${statLabelColor}">24h High</text>
+      <text x="100" y="504" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.highPrice)}</text>
+      <text x="330" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" fill="${statLabelColor}">24h Low</text>
+      <text x="330" y="504" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.lowPrice)}</text>`;
   }
 
   let sparkline = '';
@@ -150,12 +150,12 @@ function buildLooseSvg({ coin, price, direction, alertType, changePct, milestone
   <circle cx="${logoCx}" cy="${logoCy}" r="${LOGO_R_LOOSE * 1.6}" fill="url(#logoGlow)" />
   ${shapeWithShadow(logoCircle, { fill: '#FFFFFF', shadowOpacity: 0.28 })}
   ${badge.svg}
-  ${textWithShadow(logoCx + LOGO_R_LOOSE + 40, 172, `font-family="Inter, sans-serif" font-size="56" font-weight="700"`, textColor, escapeXml(coin.name))}
-  <text x="${logoCx + LOGO_R_LOOSE + 40}" y="216" font-family="Inter, sans-serif" font-size="34" fill="${subTextColor}">${escapeXml(coin.symbol)}</text>
-  ${textWithShadow(100, 400, `font-family="Inter, sans-serif" font-size="80" font-weight="700"`, textColor, escapeXml(priceStr))}
+  ${textWithShadow(logoCx + LOGO_R_LOOSE + 40, 172, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="56" font-weight="700"`, textColor, escapeXml(coin.name))}
+  <text x="${logoCx + LOGO_R_LOOSE + 40}" y="216" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="34" fill="${subTextColor}">${escapeXml(coin.symbol)}</text>
+  ${textWithShadow(100, 400, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="80" font-weight="700"`, textColor, escapeXml(priceStr))}
   ${statsRow}
   ${sparkline}
-  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, sans-serif" font-size="26" fill="${textColor}" text-anchor="end" opacity="0.85">via ${escapeXml((stats24h && stats24h.source) || 'live')}</text>
+  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" fill="${textColor}" text-anchor="end" opacity="0.85">via ${escapeXml((stats24h && stats24h.source) || 'live')}</text>
 </svg>`;
 }
 

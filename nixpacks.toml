@@ -1,0 +1,14 @@
+# Guarantees real fonts exist at the OS level via fontconfig, independent
+# of any application-level download. This is the actual fix for the "tofu
+# box" text-rendering bug: librsvg (which sharp uses to rasterize our SVG
+# cards/charts) resolves font-family names through the system's fontconfig
+# — and Railway's default Nixpacks Node image ships with NO fonts
+# installed at all. When neither our embedded-in-SVG font nor a system
+# font is available, librsvg renders literally nothing for every glyph —
+# not a fallback typeface, empty boxes — which is exactly what showed up
+# in production. `inter` and `dejavu_fonts` are real, correctly-packaged
+# nixpkgs attributes (verified against the nixpkgs source tree), so this
+# doesn't depend on any GitHub raw-file path continuing to exist the way
+# our old runtime download did.
+[phases.setup]
+nixPkgs = ["...", "inter", "dejavu_fonts", "fontconfig"]

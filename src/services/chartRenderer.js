@@ -99,7 +99,7 @@ function buildChrome({ coin, direction, preset, candles, source }) {
     const idx = Math.round((i / (tickCount - 1)) * (candles.length - 1));
     const tx = plotX + (idx / Math.max(candles.length - 1, 1)) * plotWidth;
     const anchor = i === 0 ? 'start' : i === tickCount - 1 ? 'end' : 'middle';
-    timeLabels.push(`<text x="${tx.toFixed(1)}" y="${(plotY + plotHeight + 42).toFixed(1)}" font-family="Inter, sans-serif" font-size="20" fill="${AXIS_TEXT_COLOR}" text-anchor="${anchor}">${escapeXml(formatAxisTime(candles[idx].openTime, preset.timeFmt))}</text>`);
+    timeLabels.push(`<text x="${tx.toFixed(1)}" y="${(plotY + plotHeight + 42).toFixed(1)}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="20" fill="${AXIS_TEXT_COLOR}" text-anchor="${anchor}">${escapeXml(formatAxisTime(candles[idx].openTime, preset.timeFmt))}</text>`);
   }
 
   const defs = `
@@ -118,13 +118,13 @@ function buildChrome({ coin, direction, preset, candles, source }) {
   const pctStr = format.formatPct(computeSummary(candles).changePct);
   const badgeColor = direction === 'up' ? UP_COLOR : DOWN_COLOR;
   const header = `
-    <text x="${plotX}" y="66" font-family="Inter, sans-serif" font-size="42" font-weight="700" fill="#FFFFFF">${escapeXml(coin.name)}</text>
-    <text x="${plotX}" y="102" font-family="Inter, sans-serif" font-size="26" fill="rgba(255,255,255,0.6)">${escapeXml(preset.label)}</text>
-    <text x="${CHART_WIDTH - 60}" y="66" font-family="Inter, sans-serif" font-size="42" font-weight="700" fill="#FFFFFF" text-anchor="end">${escapeXml(priceStr)}</text>
+    <text x="${plotX}" y="66" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="42" font-weight="700" fill="#FFFFFF">${escapeXml(coin.name)}</text>
+    <text x="${plotX}" y="102" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" fill="rgba(255,255,255,0.6)">${escapeXml(preset.label)}</text>
+    <text x="${CHART_WIDTH - 60}" y="66" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="42" font-weight="700" fill="#FFFFFF" text-anchor="end">${escapeXml(priceStr)}</text>
     <rect x="${CHART_WIDTH - 60 - (44 + pctStr.length * 15)}" y="80" width="${44 + pctStr.length * 15}" height="46" rx="23" fill="${badgeColor}" />
-    <text x="${CHART_WIDTH - 60 - (44 + pctStr.length * 15) / 2}" y="111" font-family="Inter, sans-serif" font-size="24" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(pctStr)}</text>`;
+    <text x="${CHART_WIDTH - 60 - (44 + pctStr.length * 15) / 2}" y="111" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" font-weight="700" fill="#FFFFFF" text-anchor="middle">${escapeXml(pctStr)}</text>`;
 
-  const footer = `<text x="${CHART_WIDTH - 40}" y="${CHART_HEIGHT - 30}" font-family="Inter, sans-serif" font-size="22" fill="rgba(255,255,255,0.5)" text-anchor="end">via ${escapeXml(source || 'live')}</text>`;
+  const footer = `<text x="${CHART_WIDTH - 40}" y="${CHART_HEIGHT - 30}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="22" fill="rgba(255,255,255,0.5)" text-anchor="end">via ${escapeXml(source || 'live')}</text>`;
   const background = `<rect x="0" y="0" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" fill="url(#chartBgGrad)" /><rect x="0" y="0" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" fill="url(#cornerGlow)" />`;
 
   return { defs, background, header, footer, plotX, plotY, plotWidth, plotHeight, timeLabels, lineColor };
@@ -137,7 +137,7 @@ function buildPriceGrid(min, max, plotX, plotY, plotWidth, plotHeight) {
     const value = min + ((max - min) * (4 - i)) / 4;
     const y = plotY + (plotHeight * i) / 4;
     gridLines.push(`<line x1="${plotX}" y1="${y.toFixed(1)}" x2="${plotX + plotWidth}" y2="${y.toFixed(1)}" stroke="${GRID_COLOR}" stroke-width="1" />`);
-    gridLabels.push(`<text x="${plotX - 16}" y="${(y + 7).toFixed(1)}" font-family="Inter, sans-serif" font-size="20" fill="${AXIS_TEXT_COLOR}" text-anchor="end">$${format.formatPrice(value)}</text>`);
+    gridLabels.push(`<text x="${plotX - 16}" y="${(y + 7).toFixed(1)}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="20" fill="${AXIS_TEXT_COLOR}" text-anchor="end">$${format.formatPrice(value)}</text>`);
   }
   return { gridLines, gridLabels };
 }
