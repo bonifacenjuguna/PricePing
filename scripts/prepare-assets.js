@@ -28,23 +28,41 @@ async function main() {
     console.warn(`Could not fetch logo URLs from CoinGecko (${err.message}) — every coin will use the offline fallback logo.`);
   }
 
-  const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
+  let pool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000 })
+    : null;
   if (pool) {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS logos (
-        symbol TEXT PRIMARY KEY,
-        png_data BYTEA NOT NULL,
-        source TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS fonts (
-        filename TEXT PRIMARY KEY,
-        font_data BYTEA NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
+    // Background connection errors (e.g. host unreachable during build)
+    // fire an 'error' event on the pool; without a handler this crashes
+    // the process even though we're about to try/catch the query below.
+    pool.on('error', (err) => {
+      console.warn(`Postgres pool error (${err.message}) — ignoring, build will continue with local-only assets.`);
+    });
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS logos (
+          symbol TEXT PRIMARY KEY,
+          png_data BYTEA NOT NULL,
+          source TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS fonts (
+          filename TEXT PRIMARY KEY,
+          font_data BYTEA NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+    } catch (err) {
+      console.warn(`Could not reach Postgres (${err.message}) — continuing with local-only asset preparation.`);
+      try {
+        await pool.end();
+      } catch (endErr) {
+        // ignore — pool never connected successfully
+      }
+      pool = null;
+    }
   } else {
     console.warn('No DATABASE_URL set — skipping Postgres upload, writing local files only.');
   }
