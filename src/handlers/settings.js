@@ -19,6 +19,7 @@ async function showSettings(ctx) {
   const buttonRows = [
     [callback(user.card_style === 'compact' ? '🖼 Switch to Loose Cards' : '🖼 Switch to Compact Cards', 'settings:togglecardstyle')],
     [callback('🌍 Timezone', 'tz:show')],
+    [callback('📢 Post to Channel', 'manualpost:start')],
     [callback('📡 Alert Delivery', 'chsettings:show:0')],
     [callback('📶 Status', 'settings:status')],
     [callback('⭐ My Watchlist', 'settings:watchlist')],

@@ -15,6 +15,7 @@ const bulkActionsHandler = require('./handlers/bulkActions');
 const chartsHandler = require('./handlers/charts');
 const fearGreedHandler = require('./handlers/fearGreed');
 const channelsHandler = require('./handlers/channels');
+const manualPostHandler = require('./handlers/manualPost');
 
 // Resolves "which channel's settings is this user editing" when a callback
 // doesn't already carry an explicit channelId. For now, DMs operate on the
@@ -217,6 +218,28 @@ async function routeCallback(ctx, data) {
     return chartsHandler.showChartMenu(ctx, { page });
   }
 
+  // --- Manual "Post to Channel" flow ---
+  if (ns === 'manualpost') {
+    if (action === 'start') return manualPostHandler.showChannelPicker(ctx);
+    if (action === 'pickchannel') return manualPostHandler.showCoinPicker(ctx, parseInt(rest[0], 10));
+    if (action === 'coinselected') return manualPostHandler.showChannelPickerForCoin(ctx, rest[0]);
+    if (action === 'pickcoin') {
+      const [channelId, symbol] = rest;
+      return manualPostHandler.showConfirm(ctx, parseInt(channelId, 10), symbol);
+    }
+    if (action === 'confirm') {
+      const [channelId, symbol] = rest;
+      return manualPostHandler.doPost(ctx, parseInt(channelId, 10), symbol);
+    }
+    return undefined;
+  }
+  if (data.startsWith('manualpost:coinpage:')) {
+    const bits = data.split(':'); // manualpost:coinpage:<channelId>:page:<N>
+    const channelId = parseInt(bits[2], 10);
+    const page = parseInt(bits[4], 10) || 0;
+    return manualPostHandler.showCoinPicker(ctx, channelId, page);
+  }
+
   return undefined;
 }
 
@@ -233,6 +256,14 @@ async function renderScreen(ctx, { screen, params }) {
       return timezoneHandler.showTimezone(ctx);
     case 'channelSettings':
       return channelSettingsHandler.showChannelSettings(ctx, params.channelId);
+    case 'postChannelPicker':
+      return manualPostHandler.showChannelPicker(ctx);
+    case 'postChannelPickerForCoin':
+      return manualPostHandler.showChannelPickerForCoin(ctx, params.symbol);
+    case 'postCoinPicker':
+      return manualPostHandler.showCoinPicker(ctx, params.channelId, params.page);
+    case 'postConfirm':
+      return manualPostHandler.showConfirm(ctx, params.channelId, params.symbol);
     case 'coinList':
       return coinListHandler.showCoinList(ctx, params);
     case 'coinPanel':

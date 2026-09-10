@@ -41,6 +41,7 @@ async function showCoinPanel(ctx, symbol, channelId) {
     [callback('⏱ Edit Cooldown', `coinpanel:cooldown:${symbol}:${channelId}`)],
     [callback(settings.onWatchlist ? '⭐ Remove from Watchlist' : '☆ Add to Watchlist', `coinpanel:watchlist:${symbol}:${channelId}`)],
     [callback('📈 View Chart', `chart:open:${symbol}`)],
+    [callback('📢 Post This to a Channel', `manualpost:coinselected:${symbol}`)],
     navRow(),
   ];
 

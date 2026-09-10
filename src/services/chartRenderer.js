@@ -112,8 +112,7 @@ function buildChrome({ coin, direction, preset, candles, source }) {
     </linearGradient>
     <radialGradient id="cornerGlow" cx="88%" cy="6%" r="60%">
       <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.18" /><stop offset="100%" stop-color="${lineColor}" stop-opacity="0" />
-    </radialGradient>
-    <filter id="lineGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" /></filter>`;
+    </radialGradient>`;
 
   const priceStr = `$${format.formatPrice(computeSummary(candles).last)}`;
   const pctStr = format.formatPct(computeSummary(candles).changePct);
@@ -152,7 +151,7 @@ function renderLineBody({ candles, summary, chrome }) {
   const [dotX, dotY] = points[points.length - 1];
   return `
     ${gridLines.join('')}${gridLabels.join('')}${chrome.timeLabels.join('')}
-    <g opacity="0.5" filter="url(#lineGlow)"><path d="${pathD}" fill="none" stroke="${lineColor}" stroke-width="8" /></g>
+    <path d="${pathD}" fill="none" stroke="${lineColor}" stroke-width="10" opacity="0.25" stroke-linejoin="round" stroke-linecap="round" />
     <path d="${pathD}" fill="none" stroke="${lineColor}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
     <circle cx="${dotX.toFixed(1)}" cy="${dotY.toFixed(1)}" r="7" fill="${lineColor}" stroke="#0B0C10" stroke-width="2.5" />`;
 }
