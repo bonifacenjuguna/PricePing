@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.7.0
+- **Went back to PricePing's actual cardRenderer.js and extracted the exact layout details** I'd only reviewed at a "system/pipeline" level earlier — pixel dimensions, centering technique, and default caption format:
+  - Compact card resized from 1200x360 to **1300x360**, matching PricePing's more elongated 3.6:1 aspect ratio (was 3.0:1) — this is the "Loong" the user remembered.
+  - Added PricePing's actual centering technique: an extra 90px inward inset on top of the base margin, on both the logo/price side and the badge/watermark side, so content reads as centered within the wide banner instead of hugging the left edge.
+  - Bottom-right watermark changed from a bare coin ticker (e.g. "BTC") to a proper `@botusername` brand handle, matching PricePing's `@PricePing` watermark convention. Loose-mode card updated the same way.
+  - Added a coin-symbol subtitle line under the price in compact mode (PricePing has this; our version was missing it).
+- **New `src/lib/captions.js`** implementing PricePing's actual default caption template shape: `<b>{name}</b>: ${price}\u00A0{handle}` sent as HTML — e.g. "**Bitcoin**: $77,000 @yourchannel" — replacing the previous bare, unformatted caption strings across `poller.js`, `manualPost.js`, and the coin-panel preview. This is the fixed default equivalent, not PricePing's full per-symbol custom-template system (`/setcaption` etc) — that's a larger feature to add later if wanted.
+- Added a `chat_handle` column (new migration `002_add_chat_handle.sql` — does not touch the already-applied `001_init.sql`, which must never be edited after deployment) so a channel's real public @username is captured at registration time and used in that channel's captions, falling back to the bot's own handle for private channels.
+- Fixed a stale hardcoded logo position in `renderCard()`'s compositing step that would have silently misaligned the logo image against the new centered layout — caught and corrected before shipping, not just in the SVG template.
+- Verified by actually rendering the new compact card and visually confirming the centering and proportions, not just reasoning about the coordinate math.
+
 ## v0.6.1
 - **Swapped CoinGecko ahead of Binance as the primary source for live price and candles**, per explicit request, as a temporary de-risking move — Binance/Kraken are still fully wired as fallback (not removed), so this is easy to flip back.
 - Added `fetchOhlc()` to the CoinGecko adapter for candle data.

@@ -16,6 +16,7 @@ const marketData = require('./marketData');
 const cardRenderer = require('./cardRenderer');
 const digestQueue = require('./digestQueue');
 const adminNotify = require('./adminNotify');
+const captions = require('../lib/captions');
 const tz = require('../lib/timezone');
 const logger = require('../lib/logger');
 
@@ -60,10 +61,8 @@ async function deliverAlert(bot, channel, alertType, entry) {
   const { coin, price, direction, changePct, milestoneLevel, isBigMilestone } = entry;
   try {
     const buffer = await cardRenderer.renderCard({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone, mode: channel.card_style || 'compact' });
-    const caption = alertType === 'milestone'
-      ? `${isBigMilestone ? '🎉 ' : ''}${coin.name} just crossed $${milestoneLevel.toLocaleString()}`
-      : `${coin.name} ${direction === 'up' ? '📈' : '📉'} ${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
-    await bot.telegram.sendPhoto(channel.chat_id, { source: buffer }, { caption });
+    const caption = captions.buildCaption({ coin, price, handleOverride: channel.chat_handle });
+    await bot.telegram.sendPhoto(channel.chat_id, { source: buffer }, { caption, parse_mode: 'HTML' });
   } catch (err) {
     logger.error('Failed to send alert card', { channelId: channel.id, symbol: coin.symbol, message: err.message });
   }

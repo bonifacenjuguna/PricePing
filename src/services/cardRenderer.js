@@ -22,17 +22,23 @@ const format = require('../lib/format');
 const { contrastTextColor, shade } = require('../lib/colors');
 const { FONT_FACES, escapeXml } = require('../lib/fonts');
 const { buildLinePath } = require('./chartRenderer');
+const botInfo = require('../lib/botInfo');
 
 const SUPERSAMPLE = config.SUPERSAMPLE;
 
-// Compact dims chosen to match the height reference from planning — short
-// and wide, single dominant price. Loose is the taller "rich" variant.
-const COMPACT_WIDTH = 1200;
-const COMPACT_HEIGHT = 400;
+// Compact dims matched against PricePing's actual values (verified by
+// re-reading its cardRenderer.js): 1300x360, a more elongated 3.6:1 aspect
+// than our original 1200x400 (3.0:1) — plus a deliberate extra center-
+// inset (COMPACT_EXTRA_INSET) so content sits well clear of both edges
+// instead of hugging the left. Loose is the taller "rich" variant.
+const COMPACT_PAD = 50; // extra width added beyond LOOSE_WIDTH to build COMPACT_WIDTH, split across both sides
+const COMPACT_WIDTH = 1300;
+const COMPACT_HEIGHT = 360;
+const COMPACT_EXTRA_INSET = 90; // additional inward push for compact-mode content, beyond the base left margin
 const LOOSE_WIDTH = 1080;
 const LOOSE_HEIGHT = 620;
 
-const LOGO_R_COMPACT = 70;
+const LOGO_R_COMPACT = 65;
 const LOGO_R_LOOSE = 100;
 
 const UP_COLOR = '#1F8A4C';
@@ -97,11 +103,18 @@ function buildBadge({ width, direction, alertType, changePct, milestoneLevel, is
 
 function buildCompactSvg({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone }) {
   const textColor = contrastTextColor(coin.color);
+  const subTextColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.78)' : 'rgba(26,26,26,0.68)';
   const priceStr = `$${format.formatPrice(price)}`;
   const badge = buildBadge({ width: COMPACT_WIDTH, direction, alertType, changePct, milestoneLevel, isBigMilestone, isStable: coin.isStable });
-  const logoCx = 150;
-  const logoCy = COMPACT_HEIGHT / 2 - 20;
+  // PricePing's centering technique: push content in from the left by an
+  // extra inset on top of the base margin, so it reads as centered within
+  // the wide banner rather than hugging the raw edge.
+  const leftInset = COMPACT_PAD + COMPACT_EXTRA_INSET;
+  const logoCx = 150 + leftInset;
+  const logoCy = COMPACT_HEIGHT / 2 - 10;
   const logoCircle = ({ dx, dy, fill, opacity }) => `<circle cx="${logoCx + dx}" cy="${logoCy + dy}" r="${LOGO_R_COMPACT}" fill="${fill}" opacity="${opacity}" />`;
+  const botHandle = botInfo.get();
+  const watermarkText = botHandle ? `@${botHandle}` : coin.symbol;
 
   return `
 <svg width="${COMPACT_WIDTH}" height="${COMPACT_HEIGHT}" viewBox="0 0 ${COMPACT_WIDTH} ${COMPACT_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
@@ -111,9 +124,11 @@ function buildCompactSvg({ coin, price, direction, alertType, changePct, milesto
   <circle cx="${logoCx}" cy="${logoCy}" r="${LOGO_R_COMPACT * 1.6}" fill="url(#logoGlow)" />
   ${shapeWithShadow(logoCircle, { fill: '#FFFFFF', shadowOpacity: 0.28 })}
   ${badge.svg}
-  ${textWithShadow(logoCx + LOGO_R_COMPACT + 50, COMPACT_HEIGHT / 2 + 5, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="96" font-weight="700"`, textColor, escapeXml(priceStr))}
-  <text x="${COMPACT_WIDTH - 50}" y="${COMPACT_HEIGHT - 34}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" font-weight="700"
-        fill="${textColor}" text-anchor="end" opacity="0.9">${escapeXml(coin.symbol)}</text>
+  ${textWithShadow(logoCx + LOGO_R_COMPACT + 40, COMPACT_HEIGHT / 2, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="82" font-weight="700"`, textColor, escapeXml(priceStr))}
+  <text x="${logoCx + LOGO_R_COMPACT + 40}" y="${COMPACT_HEIGHT / 2 + 34}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" font-weight="400"
+        fill="${subTextColor}">${escapeXml(coin.symbol)}</text>
+  <text x="${COMPACT_WIDTH - leftInset - 10}" y="${COMPACT_HEIGHT - 40}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" font-weight="700"
+        fill="${textColor}" text-anchor="end" opacity="0.9">${escapeXml(watermarkText)}</text>
 </svg>`;
 }
 
@@ -155,7 +170,7 @@ function buildLooseSvg({ coin, price, direction, alertType, changePct, milestone
   ${textWithShadow(100, 400, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="80" font-weight="700"`, textColor, escapeXml(priceStr))}
   ${statsRow}
   ${sparkline}
-  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" fill="${textColor}" text-anchor="end" opacity="0.85">via ${escapeXml((stats24h && stats24h.source) || 'live')}</text>
+  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" fill="${textColor}" text-anchor="end" opacity="0.85">${escapeXml(botInfo.get() ? `@${botInfo.get()}` : (stats24h && stats24h.source) || 'live')}</text>
 </svg>`;
 }
 
@@ -178,8 +193,8 @@ async function renderCard({ coin, price, direction, alertType, changePct, milest
     : buildLooseSvg({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone, stats24h, candles });
 
   const base = sharp(Buffer.from(svg), { density: 72 * SUPERSAMPLE });
-  const logoCx = isCompact ? 150 : 170;
-  const logoCy = isCompact ? COMPACT_HEIGHT / 2 - 20 : 190;
+  const logoCx = isCompact ? 150 + COMPACT_PAD + COMPACT_EXTRA_INSET : 170;
+  const logoCy = isCompact ? COMPACT_HEIGHT / 2 - 10 : 190;
   const logoR = isCompact ? LOGO_R_COMPACT : LOGO_R_LOOSE;
   const pipeline = await compositeLogo(base, coin, logoCx, logoCy, logoR);
 

@@ -13,7 +13,7 @@ async function handleMyChatMember(ctx) {
   if (!isChannelOrGroup) return;
 
   if (newStatus === 'administrator') {
-    await channelsDb.addChannel(chat.id, chat.title, update.from.id);
+    await channelsDb.addChannel(chat.id, chat.title, update.from.id, chat.username);
     logger.info('Bot added as admin, channel registered', { chatId: chat.id, title: chat.title });
     try {
       await ctx.telegram.sendMessage(

@@ -3,6 +3,7 @@ const { bySymbol } = require('../coins');
 const coinSettingsDb = require('../db/coinSettings');
 const marketData = require('../services/marketData');
 const cardRenderer = require('../services/cardRenderer');
+const captions = require('../lib/captions');
 const format = require('../lib/format');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit } = require('../lib/ephemeral');
@@ -87,7 +88,10 @@ async function sendPreviewCard(ctx, symbol, channelId) {
     const buffer = await cardRenderer.renderCard({
       coin, price: priceInfo.price, direction: null, alertType: 'manual', mode: cardStyle,
     });
-    await ctx.replyWithPhoto({ source: buffer }, { caption: `${coin.name} — $${format.formatPrice(priceInfo.price)} (preview, ${cardStyle})` });
+    await ctx.replyWithPhoto({ source: buffer }, {
+      caption: `${captions.buildCaption({ coin, price: priceInfo.price })} (preview, ${cardStyle})`,
+      parse_mode: 'HTML',
+    });
   } catch (err) {
     logger.error('Card preview failed', { symbol, message: err.message });
     await ctx.reply('⚠️ Could not render a preview right now — try again shortly.');

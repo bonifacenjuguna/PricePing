@@ -1,12 +1,12 @@
 const { pool } = require('./postgres');
 
-async function addChannel(chatId, title, addedBy) {
+async function addChannel(chatId, title, addedBy, chatHandle) {
   const { rows } = await pool.query(
-    `INSERT INTO channels (chat_id, title, added_by)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (chat_id) DO UPDATE SET title = $2, is_active = true
+    `INSERT INTO channels (chat_id, title, added_by, chat_handle)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (chat_id) DO UPDATE SET title = $2, is_active = true, chat_handle = $4
      RETURNING *`,
-    [chatId, title, addedBy]
+    [chatId, title, addedBy, chatHandle || null]
   );
   return rows[0];
 }

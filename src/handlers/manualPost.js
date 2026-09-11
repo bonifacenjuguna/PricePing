@@ -9,6 +9,7 @@ const { bySymbol } = require('../coins');
 const channelsDb = require('../db/channels');
 const marketData = require('../services/marketData');
 const cardRenderer = require('../services/cardRenderer');
+const captions = require('../lib/captions');
 const format = require('../lib/format');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit, sendEphemeral } = require('../lib/ephemeral');
@@ -93,7 +94,10 @@ async function doPost(ctx, channelId, symbol) {
       alertType: 'manual',
       mode: channel.card_style || 'compact',
     });
-    await ctx.telegram.sendPhoto(channel.chat_id, { source: buffer }, { caption: `${coin.name} — $${format.formatPrice(priceInfo.price)}` });
+    await ctx.telegram.sendPhoto(channel.chat_id, { source: buffer }, {
+      caption: captions.buildCaption({ coin, price: priceInfo.price, handleOverride: channel.chat_handle }),
+      parse_mode: 'HTML',
+    });
     await sendEphemeral(ctx, format.successMessage(`Posted ${coin.symbol} to ${channel.title || channel.chat_id}.`));
   } catch (err) {
     logger.error('Manual post failed', { channelId, symbol, message: err.message });
