@@ -16,7 +16,7 @@ const marketData = require('./marketData');
 const cardRenderer = require('./cardRenderer');
 const digestQueue = require('./digestQueue');
 const adminNotify = require('./adminNotify');
-const captions = require('../lib/captions');
+const templateEngine = require('../lib/templateEngine');
 const tz = require('../lib/timezone');
 const logger = require('../lib/logger');
 
@@ -58,10 +58,12 @@ async function deliverAlert(bot, channel, alertType, entry) {
     await digestQueue.enqueue(channel.id, { alertType, ...entry });
     return;
   }
-  const { coin, price, direction, changePct, milestoneLevel, isBigMilestone } = entry;
+  const { coin, price, direction, changeUsd, changePct, milestoneLevel, isBigMilestone, threshold } = entry;
   try {
     const buffer = await cardRenderer.renderCard({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone, mode: channel.card_style || 'compact' });
-    const caption = captions.buildCaption({ coin, price, handleOverride: channel.chat_handle });
+    const caption = await templateEngine.renderCaption(alertType, {
+      coin, price, direction, changeUsd, changePct, alertType, milestoneLevel, threshold, channel,
+    });
     await bot.telegram.sendPhoto(channel.chat_id, { source: buffer }, { caption, parse_mode: 'HTML' });
   } catch (err) {
     logger.error('Failed to send alert card', { channelId: channel.id, symbol: coin.symbol, message: err.message });
@@ -134,7 +136,10 @@ async function tickChannel(bot, channel) {
     await coinStateDb.recordAlert(channel.id, coin.symbol, price);
     const direction = changeUsd >= 0 ? 'up' : 'down';
     // eslint-disable-next-line no-await-in-loop
-    await deliverAlert(bot, channel, 'threshold', { coin, symbol: coin.symbol, price, direction, changePct });
+    await deliverAlert(bot, channel, 'threshold', {
+      coin, symbol: coin.symbol, price, direction, changeUsd, changePct,
+      threshold: { type: settings.thresholdType, value: settings.thresholdValue },
+    });
   }
 }
 

@@ -9,7 +9,7 @@ const { bySymbol } = require('../coins');
 const channelsDb = require('../db/channels');
 const marketData = require('../services/marketData');
 const cardRenderer = require('../services/cardRenderer');
-const captions = require('../lib/captions');
+const templateEngine = require('../lib/templateEngine');
 const format = require('../lib/format');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit, sendEphemeral } = require('../lib/ephemeral');
@@ -87,15 +87,31 @@ async function doPost(ctx, channelId, symbol) {
       await sendEphemeral(ctx, '⚠️ No live price available right now — nothing posted.');
       return;
     }
+    const mode = channel.card_style || 'compact';
+    // Loose mode on a manual post gets PricePing's "rich" treatment (24h
+    // stats + sparkline) — a manual post is deliberate content, not a
+    // fired trigger, so it earns the extra context. Best-effort: if either
+    // fetch fails, the card just renders without that row (both already
+    // handle a null/short result gracefully).
+    let stats24h = null;
+    let candles = null;
+    if (mode === 'loose') {
+      [stats24h, candles] = await Promise.all([
+        marketData.fetch24hStats(symbol),
+        marketData.fetchCandles(symbol, { interval: '15m', limit: 96, krakenIntervalMinutes: 15, geckoDays: 1 }).then((r) => r.candles).catch(() => null),
+      ]);
+    }
     const buffer = await cardRenderer.renderCard({
       coin,
       price: priceInfo.price,
       direction: null, // no badge for a manual post — there's no threshold/milestone context to show
       alertType: 'manual',
-      mode: channel.card_style || 'compact',
+      stats24h,
+      candles,
+      mode,
     });
     await ctx.telegram.sendPhoto(channel.chat_id, { source: buffer }, {
-      caption: captions.buildCaption({ coin, price: priceInfo.price, handleOverride: channel.chat_handle }),
+      caption: await templateEngine.renderCaption('manual', { coin, price: priceInfo.price, stats24h, channel }),
       parse_mode: 'HTML',
     });
     await sendEphemeral(ctx, format.successMessage(`Posted ${coin.symbol} to ${channel.title || channel.chat_id}.`));

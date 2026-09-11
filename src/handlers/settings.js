@@ -20,6 +20,7 @@ async function showSettings(ctx) {
     [callback(user.card_style === 'compact' ? '🖼 Switch to Loose Cards' : '🖼 Switch to Compact Cards', 'settings:togglecardstyle')],
     [callback('🌍 Timezone', 'tz:show')],
     [callback('📢 Post to Channel', 'manualpost:start')],
+    [callback('✏️ Captions', 'captionsettings:show')],
     [callback('📡 Manage Channels', 'managechannels:show')],
     [callback('📶 Status', 'settings:status')],
     [callback('⭐ My Watchlist', 'settings:watchlist')],

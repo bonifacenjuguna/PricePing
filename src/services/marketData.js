@@ -174,6 +174,23 @@ async function fetchMarketData(geckoIds) {
 }
 
 // ---------------------------------------------------------------------------
+// 24H STATS (high/low) — Binance only for now; used by the loose/rich card's
+// stats row on manual posts. Failure here just means the card renders
+// without that row (handled by the caller checking for null) — not worth
+// a full fallback chain for a cosmetic addition.
+// ---------------------------------------------------------------------------
+async function fetch24hStats(symbol) {
+  const coin = bySymbol.get(symbol);
+  if (!coin || !coin.binancePair) return null;
+  try {
+    return await callSource('binance', () => binance.fetch24hStats(coin.binancePair));
+  } catch (err) {
+    logger.warn('24h stats fetch failed', { symbol, message: err.message });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FEAR & GREED — Alternative.me, no fallback
 // ---------------------------------------------------------------------------
 async function fetchFearGreed() {
@@ -234,6 +251,7 @@ module.exports = {
   isStale,
   fetchCandles,
   fetchMarketData,
+  fetch24hStats,
   fetchFearGreed,
   confirmPrice,
   selfCheckAllSources,

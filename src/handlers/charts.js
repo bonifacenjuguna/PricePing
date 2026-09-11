@@ -2,6 +2,7 @@ const { Markup } = require('telegraf');
 const { bySymbol } = require('../coins');
 const marketData = require('../services/marketData');
 const chartRenderer = require('../services/chartRenderer');
+const templateEngine = require('../lib/templateEngine');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit } = require('../lib/ephemeral');
 const navStack = require('../lib/navStack');
@@ -54,7 +55,9 @@ async function renderAndSend(ctx, symbol, periodKey, style) {
       geckoDays: preset.geckoDays,
     });
     const buffer = await chartRenderer.renderChart({ coin, candles, periodKey, style, source });
-    await ctx.replyWithPhoto({ source: buffer }, { caption: `${coin.name} — ${preset.label} (${style})` });
+    const lastPrice = candles.length ? candles[candles.length - 1].close : 0;
+    const caption = await templateEngine.renderCaption('chart', { coin, price: lastPrice, periodLabel: `${preset.label} (${style})` });
+    await ctx.replyWithPhoto({ source: buffer }, { caption, parse_mode: 'HTML' });
   } catch (err) {
     logger.error('Chart render failed', { symbol, periodKey, style, message: err.message });
     await ctx.reply(`⚠️ Couldn't render that chart right now (${symbol} data unavailable). Try again shortly.`);

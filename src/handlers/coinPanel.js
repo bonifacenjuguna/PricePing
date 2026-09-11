@@ -3,7 +3,7 @@ const { bySymbol } = require('../coins');
 const coinSettingsDb = require('../db/coinSettings');
 const marketData = require('../services/marketData');
 const cardRenderer = require('../services/cardRenderer');
-const captions = require('../lib/captions');
+const templateEngine = require('../lib/templateEngine');
 const format = require('../lib/format');
 const { callback, navRow } = require('../keyboards/buttonStyle');
 const { safeEdit } = require('../lib/ephemeral');
@@ -89,7 +89,7 @@ async function sendPreviewCard(ctx, symbol, channelId) {
       coin, price: priceInfo.price, direction: null, alertType: 'manual', mode: cardStyle,
     });
     await ctx.replyWithPhoto({ source: buffer }, {
-      caption: `${captions.buildCaption({ coin, price: priceInfo.price })} (preview, ${cardStyle})`,
+      caption: `${await templateEngine.renderCaption('manual', { coin, price: priceInfo.price })}\n<i>(preview, ${cardStyle})</i>`,
       parse_mode: 'HTML',
     });
   } catch (err) {

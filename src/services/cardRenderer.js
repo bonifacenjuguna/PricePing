@@ -36,10 +36,10 @@ const COMPACT_WIDTH = 1300;
 const COMPACT_HEIGHT = 360;
 const COMPACT_EXTRA_INSET = 90; // additional inward push for compact-mode content, beyond the base left margin
 const LOOSE_WIDTH = 1080;
-const LOOSE_HEIGHT = 620;
+const LOOSE_HEIGHT = 566; // exact match to PricePing's CARD_HEIGHT
 
 const LOGO_R_COMPACT = 65;
-const LOGO_R_LOOSE = 100;
+const LOGO_R_LOOSE = 112; // exact match to PricePing's LOGO_CIRCLE_R
 
 const UP_COLOR = '#1F8A4C';
 const DOWN_COLOR = '#C62828';
@@ -83,20 +83,22 @@ function textWithShadow(x, y, attrs, fill, content, { dx = 0, dy = 3, shadowOpac
     <text x="${x}" y="${y}" ${attrs} fill="${fill}">${content}</text>`;
 }
 
-function buildBadge({ width, direction, alertType, changePct, milestoneLevel, isBigMilestone, isStable }) {
+function buildBadge({ width, direction, alertType, changePct, milestoneLevel, isBigMilestone, isStable, rightMargin = 60, topY = 60 }) {
   if (isStable || (!direction && alertType !== 'milestone')) return { svg: '', width: 0 };
   const badgeColor = direction === 'up' ? UP_COLOR : DOWN_COLOR;
   const arrow = format.directionSymbol(direction);
   const isMilestone = alertType === 'milestone';
   const text = isMilestone ? `${arrow} $${format.formatPrice(milestoneLevel)}` : `${arrow} ${format.formatPct(changePct)}`;
-  const h = isBigMilestone ? 78 : 66;
-  const fontSize = isBigMilestone ? 34 : 30;
-  const w = 56 + text.length * (isBigMilestone ? 18 : 16);
-  const x = width - 50 - w;
-  const rectShape = ({ dx, dy, fill, opacity }) => `<rect x="${x + dx}" y="${46 + dy}" width="${w}" height="${h}" rx="${h / 2}" fill="${fill}" opacity="${opacity}" />`;
+  // Exact match to PricePing's badge sizing: height 72/84 (big milestone),
+  // font 34/38, width formula 60 + len*(19|17), top-anchored at y=60.
+  const h = isBigMilestone ? 84 : 72;
+  const fontSize = isBigMilestone ? 38 : 34;
+  const w = 60 + text.length * (isBigMilestone ? 19 : 17);
+  const x = width - rightMargin - w;
+  const rectShape = ({ dx, dy, fill, opacity }) => `<rect x="${x + dx}" y="${topY + dy}" width="${w}" height="${h}" rx="${h / 2}" fill="${fill}" opacity="${opacity}" />`;
   const svg = `
     ${shapeWithShadow(rectShape, { fill: badgeColor })}
-    <text x="${x + w / 2}" y="${46 + h / 2 + 10}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="${fontSize}" font-weight="700"
+    <text x="${x + w / 2}" y="${topY + h / 2 + 12}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="${fontSize}" font-weight="700"
           fill="#FFFFFF" text-anchor="middle">${escapeXml(text)}</text>`;
   return { svg, width: w };
 }
@@ -134,27 +136,39 @@ function buildCompactSvg({ coin, price, direction, alertType, changePct, milesto
 
 function buildLooseSvg({ coin, price, direction, alertType, changePct, milestoneLevel, isBigMilestone, stats24h, candles }) {
   const textColor = contrastTextColor(coin.color);
-  const subTextColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.75)' : 'rgba(26,26,26,0.65)';
-  const statLabelColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.68)' : 'rgba(26,26,26,0.6)';
+  const subTextColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.78)' : 'rgba(26,26,26,0.68)';
+  const statLabelColor = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(26,26,26,0.62)';
   const priceStr = `$${format.formatPrice(price)}`;
   const badge = buildBadge({ width: LOOSE_WIDTH, direction, alertType, changePct, milestoneLevel, isBigMilestone, isStable: coin.isStable });
   const logoCx = 170;
-  const logoCy = 190;
+  const logoCy = 195; // exact match to PricePing's LOGO_CIRCLE_CY
   const logoCircle = ({ dx, dy, fill, opacity }) => `<circle cx="${logoCx + dx}" cy="${logoCy + dy}" r="${LOGO_R_LOOSE}" fill="${fill}" opacity="${opacity}" />`;
+
+  // PricePing splits this into two distinct layouts sharing the same
+  // canvas: "regular" (threshold/milestone, price sits at y=430, no
+  // stats/sparkline) vs "rich" (manual posts only, price at y=400 to make
+  // room for a stats row + sparkline below it). We use presence of
+  // stats24h/candles as the same signal rather than a separate function,
+  // since our mode selection is a style toggle rather than PricePing's
+  // per-alert-type split — same visual result either way.
+  const hasRichContent = !!(stats24h || (candles && candles.length > 1));
+  const priceY = hasRichContent ? 400 : 430;
 
   let statsRow = '';
   if (stats24h) {
     statsRow = `
-      <text x="100" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" fill="${statLabelColor}">24h High</text>
-      <text x="100" y="504" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.highPrice)}</text>
-      <text x="330" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" fill="${statLabelColor}">24h Low</text>
-      <text x="330" y="504" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="30" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.lowPrice)}</text>`;
+      <text x="100" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" font-weight="400" fill="${statLabelColor}">24h High</text>
+      <text x="100" y="502" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="32" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.highPrice)}</text>
+      <text x="330" y="470" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" font-weight="400" fill="${statLabelColor}">24h Low</text>
+      <text x="330" y="502" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="32" font-weight="700" fill="${textColor}">$${format.formatPrice(stats24h.lowPrice)}</text>`;
   }
 
   let sparkline = '';
   if (candles && candles.length > 1) {
     const sparkColor = textColor === '#FFFFFF' ? '#FFFFFF' : '#1A1A1A';
-    sparkline = `<g opacity="0.9">${buildLinePath(candles, { x: 610, y: 400, width: 400, height: 70, strokeColor: sparkColor, strokeWidth: 4 })}</g>`;
+    sparkline = `
+      <text x="620" y="386" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="24" font-weight="400" fill="${statLabelColor}">Last 24h</text>
+      <g opacity="0.9">${buildLinePath(candles, { x: 620, y: 400, width: 400, height: 70, strokeColor: sparkColor, strokeWidth: 4 })}</g>`;
   }
 
   return `
@@ -162,22 +176,22 @@ function buildLooseSvg({ coin, price, direction, alertType, changePct, milestone
   <defs>${FONT_FACES()}${buildDefs(coin)}</defs>
   <rect x="0" y="0" width="${LOOSE_WIDTH}" height="${LOOSE_HEIGHT}" fill="url(#bgGrad)" />
   <rect x="0" y="0" width="${LOOSE_WIDTH}" height="${LOOSE_HEIGHT}" fill="url(#vignette)" />
-  <circle cx="${logoCx}" cy="${logoCy}" r="${LOGO_R_LOOSE * 1.6}" fill="url(#logoGlow)" />
+  <circle cx="${logoCx}" cy="${logoCy}" r="${LOGO_R_LOOSE * 1.7}" fill="url(#logoGlow)" />
   ${shapeWithShadow(logoCircle, { fill: '#FFFFFF', shadowOpacity: 0.28 })}
   ${badge.svg}
-  ${textWithShadow(logoCx + LOGO_R_LOOSE + 40, 172, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="56" font-weight="700"`, textColor, escapeXml(coin.name))}
-  <text x="${logoCx + LOGO_R_LOOSE + 40}" y="216" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="34" fill="${subTextColor}">${escapeXml(coin.symbol)}</text>
-  ${textWithShadow(100, 400, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="80" font-weight="700"`, textColor, escapeXml(priceStr))}
+  ${textWithShadow(logoCx + LOGO_R_LOOSE + 40, 172, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="62" font-weight="700"`, textColor, escapeXml(coin.name))}
+  <text x="${logoCx + LOGO_R_LOOSE + 40}" y="218" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="40" font-weight="400" fill="${subTextColor}">${escapeXml(coin.symbol)}</text>
+  ${textWithShadow(100, priceY, `font-family="Inter, 'DejaVu Sans', sans-serif" font-size="96" font-weight="700"`, textColor, escapeXml(priceStr))}
   ${statsRow}
   ${sparkline}
-  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="26" fill="${textColor}" text-anchor="end" opacity="0.85">${escapeXml(botInfo.get() ? `@${botInfo.get()}` : (stats24h && stats24h.source) || 'live')}</text>
+  <text x="${LOOSE_WIDTH - 40}" y="${LOOSE_HEIGHT - 36}" font-family="Inter, 'DejaVu Sans', sans-serif" font-size="30" font-weight="700" fill="${textColor}" text-anchor="end" opacity="0.95">${escapeXml(botInfo.get() ? `@${botInfo.get()}` : (stats24h && stats24h.source) || 'live')}</text>
 </svg>`;
 }
 
 async function compositeLogo(base, coin, cx, cy, r) {
   const logoPath = path.join(config.logosDir, `${coin.symbol.toLowerCase()}.png`);
   if (!fs.existsSync(logoPath)) return base;
-  const size = Math.round(r * 1.7 * SUPERSAMPLE);
+  const size = Math.round(r * 1.75 * SUPERSAMPLE); // exact ratio match to PricePing (LOGO_SIZE/LOGO_CIRCLE_R ≈ 1.75)
   const scaledCx = cx * SUPERSAMPLE;
   const scaledCy = cy * SUPERSAMPLE;
   const logoBuffer = await sharp(logoPath).resize(size, size, { fit: 'contain', kernel: 'lanczos3' }).toBuffer();
@@ -194,7 +208,7 @@ async function renderCard({ coin, price, direction, alertType, changePct, milest
 
   const base = sharp(Buffer.from(svg), { density: 72 * SUPERSAMPLE });
   const logoCx = isCompact ? 150 + COMPACT_PAD + COMPACT_EXTRA_INSET : 170;
-  const logoCy = isCompact ? COMPACT_HEIGHT / 2 - 10 : 190;
+  const logoCy = isCompact ? COMPACT_HEIGHT / 2 - 10 : 195;
   const logoR = isCompact ? LOGO_R_COMPACT : LOGO_R_LOOSE;
   const pipeline = await compositeLogo(base, coin, logoCx, logoCy, logoR);
 

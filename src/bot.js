@@ -17,6 +17,7 @@ const fearGreedHandler = require('./handlers/fearGreed');
 const channelsHandler = require('./handlers/channels');
 const manageChannelsHandler = require('./handlers/manageChannels');
 const manualPostHandler = require('./handlers/manualPost');
+const captionSettingsHandler = require('./handlers/captionSettings');
 
 // Resolves "which channel's settings is this user editing" when a callback
 // doesn't already carry an explicit channelId. For now, DMs operate on the
@@ -55,6 +56,10 @@ function createBot() {
   bot.on('text', async (ctx, next) => {
     if (ctx.session.awaitingCustomTimezone) {
       const handled = await timezoneHandler.handleCustomInput(ctx, ctx.message.text);
+      if (handled) return;
+    }
+    if (ctx.session.awaitingCaptionTemplate) {
+      const handled = await captionSettingsHandler.applyEditInput(ctx, ctx.message.text);
       if (handled) return;
     }
     if (ctx.session.awaitingInput) {
@@ -147,6 +152,17 @@ async function routeCallback(ctx, data) {
   // --- Manage channels: add-to-channel deep link + list of registered channels ---
   if (ns === 'managechannels') {
     if (action === 'show') return manageChannelsHandler.showManageChannels(ctx);
+    return undefined;
+  }
+
+  // --- Caption templates (menu equivalent of PricePing's /setcaption etc) ---
+  if (ns === 'captionsettings') {
+    if (action === 'show') return captionSettingsHandler.showCaptionSettings(ctx);
+    if (action === 'opentype') return captionSettingsHandler.showTypeDetail(ctx, rest[0]);
+    if (action === 'edit') return captionSettingsHandler.promptEdit(ctx, rest[0]);
+    if (action === 'preview') return captionSettingsHandler.previewType(ctx, rest[0]);
+    if (action === 'reset') return captionSettingsHandler.resetType(ctx, rest[0]);
+    if (action === 'variables') return captionSettingsHandler.showVariables(ctx);
     return undefined;
   }
 
@@ -266,6 +282,12 @@ async function renderScreen(ctx, { screen, params }) {
       return channelSettingsHandler.showChannelSettings(ctx, params.channelId);
     case 'manageChannels':
       return manageChannelsHandler.showManageChannels(ctx);
+    case 'captionSettings':
+      return captionSettingsHandler.showCaptionSettings(ctx);
+    case 'captionTypeDetail':
+      return captionSettingsHandler.showTypeDetail(ctx, params.alertType);
+    case 'captionVariables':
+      return captionSettingsHandler.showVariables(ctx);
     case 'postChannelPicker':
       return manualPostHandler.showChannelPicker(ctx);
     case 'postChannelPickerForCoin':
