@@ -23,12 +23,18 @@ const AXIS_TEXT_COLOR = 'rgba(255,255,255,0.55)';
 const UP_COLOR = '#3DDC84';
 const DOWN_COLOR = '#FF5C5C';
 
-// Period presets: interval string for Binance, minutes for Kraken.
+// Period presets: interval string for Binance, minutes for Kraken, days for
+// CoinGecko (now primary — see marketData.js). CoinGecko's granularity is
+// auto-selected by its `days` param, not independently choosable: 1-2 days
+// -> 30min candles, 3-30 days -> 4h candles. That means our "1h" preset
+// can't get true 1-hour resolution from CoinGecko — it'll fall back to
+// Binance for that specific case in practice, which is fine, just worth
+// knowing if the chart looks chunkier than expected for short periods.
 const PERIOD_PRESETS = {
-  '1h': { binanceInterval: '1m', krakenMinutes: 1, limit: 60, label: 'Last 1 hour', timeFmt: 'time' },
-  '24h': { binanceInterval: '15m', krakenMinutes: 15, limit: 96, label: 'Last 24 hours', timeFmt: 'time' },
-  '7d': { binanceInterval: '2h', krakenMinutes: 120, limit: 84, label: 'Last 7 days', timeFmt: 'date' },
-  '30d': { binanceInterval: '6h', krakenMinutes: 360, limit: 120, label: 'Last 30 days', timeFmt: 'date' },
+  '1h': { binanceInterval: '1m', krakenMinutes: 1, limit: 60, geckoDays: 1, label: 'Last 1 hour', timeFmt: 'time' },
+  '24h': { binanceInterval: '15m', krakenMinutes: 15, limit: 96, geckoDays: 1, label: 'Last 24 hours', timeFmt: 'time' },
+  '7d': { binanceInterval: '2h', krakenMinutes: 120, limit: 84, geckoDays: 7, label: 'Last 7 days', timeFmt: 'date' },
+  '30d': { binanceInterval: '6h', krakenMinutes: 360, limit: 120, geckoDays: 30, label: 'Last 30 days', timeFmt: 'date' },
 };
 
 const CHART_STYLES = {

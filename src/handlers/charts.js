@@ -51,6 +51,7 @@ async function renderAndSend(ctx, symbol, periodKey, style) {
       interval: preset.binanceInterval,
       limit: preset.limit,
       krakenIntervalMinutes: preset.krakenMinutes,
+      geckoDays: preset.geckoDays,
     });
     const buffer = await chartRenderer.renderChart({ coin, candles, periodKey, style, source });
     await ctx.replyWithPhoto({ source: buffer }, { caption: `${coin.name} — ${preset.label} (${style})` });

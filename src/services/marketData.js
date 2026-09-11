@@ -4,10 +4,18 @@
 // in one place — see the planning conversation for the source-to-strength
 // mapping this encodes:
 //
-//   live price / candles   -> Binance -> Kraken -> (CoinGecko as last resort)
+//   live price / candles   -> CoinGecko (temporary, primary) -> Binance -> Kraken
 //   market cap/rank/supply  -> CoinGecko -> CoinPaprika -> CoinLore
 //   on-chain / extra OHLC   -> GeckoTerminal
 //   sentiment                -> Alternative.me (no fallback — see its adapter)
+//
+// NOTE: CoinGecko was swapped ahead of Binance for price/candles as a
+// deliberate, temporary call while debugging other issues — not the
+// original design. Known tradeoffs: CoinGecko's OHLC endpoint is coarser
+// (no true 1-minute candles, see coingecko.js's fetchOhlc), and its
+// free-tier rate limit is much tighter than Binance's, so this is more
+// exposed to throttling under load. Easy to flip back — Binance is still
+// wired as fallback below, not removed.
 const binance = require('./sources/binance');
 const kraken = require('./sources/kraken');
 const coingecko = require('./sources/coingecko');
@@ -49,29 +57,48 @@ async function callSource(sourceName, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// LIVE PRICE — Binance -> Kraken -> CoinGecko(single-coin) as last resort
+// LIVE PRICE — CoinGecko (temporary primary) -> Binance -> Kraken
 // ---------------------------------------------------------------------------
+const geckoIdToSymbol = new Map(coins.map((c) => [c.geckoId, c.symbol]));
+
 async function fetchAllPrices() {
   const cacheKey = 'prices:all';
   return apiCache.getOrFetch(cacheKey, 8, async () => {
-    const pairs = coins.filter((c) => c.binancePair).map((c) => c.binancePair);
     const out = new Map(); // symbol -> { price, source, fetchedAt }
     const fetchedAt = Date.now();
 
     try {
-      const binancePrices = await callSource('binance', () => binance.fetchPrices(pairs));
-      for (const coin of coins) {
-        if (coin.binancePair && binancePrices.has(coin.binancePair)) {
-          out.set(coin.symbol, { price: binancePrices.get(coin.binancePair), source: 'binance', fetchedAt });
+      const geckoIds = coins.map((c) => c.geckoId).filter(Boolean);
+      const geckoData = await callSource('coingecko', () => coingecko.fetchMarkets(geckoIds));
+      for (const [geckoId, data] of geckoData) {
+        const symbol = geckoIdToSymbol.get(geckoId);
+        if (symbol && typeof data.price === 'number') {
+          out.set(symbol, { price: data.price, source: 'coingecko', fetchedAt });
         }
       }
     } catch (err) {
-      logger.warn('Binance bulk price fetch failed, falling back per-coin to Kraken', { message: err.message });
+      logger.warn('CoinGecko bulk price fetch failed, falling back to Binance', { message: err.message });
     }
 
-    // Fill gaps (coins Binance missed, or the whole call failed) via Kraken
-    const missing = coins.filter((c) => !c.isStable && !out.has(c.symbol) && c.krakenPair);
-    for (const coin of missing) {
+    // Fill any gaps (coins CoinGecko missed, or the whole call failed) via Binance
+    const missingBinance = coins.filter((c) => !c.isStable && !out.has(c.symbol) && c.binancePair);
+    if (missingBinance.length) {
+      try {
+        const pairs = missingBinance.map((c) => c.binancePair);
+        const binancePrices = await callSource('binance', () => binance.fetchPrices(pairs));
+        for (const coin of missingBinance) {
+          if (binancePrices.has(coin.binancePair)) {
+            out.set(coin.symbol, { price: binancePrices.get(coin.binancePair), source: 'binance', fetchedAt });
+          }
+        }
+      } catch (err) {
+        logger.warn('Binance fallback price fetch failed, falling back per-coin to Kraken', { message: err.message });
+      }
+    }
+
+    // Final gap-fill via Kraken
+    const missingKraken = coins.filter((c) => !c.isStable && !out.has(c.symbol) && c.krakenPair);
+    for (const coin of missingKraken) {
       try {
         const price = await callSource('kraken', () => kraken.fetchPrice(coin.krakenPair));
         out.set(coin.symbol, { price, source: 'kraken', fetchedAt });
@@ -80,7 +107,7 @@ async function fetchAllPrices() {
       }
     }
 
-    // USDT has no natural USDT pair on Binance — pegged to ~$1, no live feed needed
+    // USDT: pegged to ~$1 only as a last resort if every source above missed it
     if (!out.has('USDT')) out.set('USDT', { price: 1, source: 'peg', fetchedAt });
 
     return Object.fromEntries(out);
@@ -92,14 +119,23 @@ function isStale(fetchedAt) {
 }
 
 // ---------------------------------------------------------------------------
-// CANDLES — Binance -> Kraken -> GeckoTerminal
+// CANDLES — CoinGecko (temporary primary) -> Binance -> Kraken
 // ---------------------------------------------------------------------------
-async function fetchCandles(symbol, { interval, limit, krakenIntervalMinutes }) {
+async function fetchCandles(symbol, { interval, limit, krakenIntervalMinutes, geckoDays }) {
   const coin = bySymbol.get(symbol);
   if (!coin) throw new Error(`Unknown symbol ${symbol}`);
 
   const cacheKey = `candles:${symbol}:${interval}:${limit}`;
   return apiCache.getOrFetch(cacheKey, 30, async () => {
+    if (coin.geckoId && geckoDays) {
+      try {
+        const candles = await callSource('coingecko', () => coingecko.fetchOhlc(coin.geckoId, geckoDays));
+        if (candles.length) return { candles, source: 'coingecko' };
+        logger.warn('CoinGecko OHLC returned no candles, trying Binance', { symbol });
+      } catch (err) {
+        logger.warn('CoinGecko candles failed, trying Binance', { symbol, message: err.message });
+      }
+    }
     if (coin.binancePair) {
       try {
         return { candles: await callSource('binance', () => binance.fetchCandles(coin.binancePair, interval, limit)), source: 'binance' };

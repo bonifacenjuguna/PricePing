@@ -1,7 +1,10 @@
-// Primary source for aggregated market data (market cap, rank, supply,
-// ATH/ATL) and coin logo images. Keyless public API — rate-limited (~10-30
-// calls/min) but no account/key needed. Not used for candlesticks (its OHLC
-// endpoint is too coarse) — that's Binance/Kraken's job.
+// Primary source for live price AND aggregated market data (market cap,
+// rank, supply, ATH/ATL) and coin logo images, for now — swapped ahead of
+// Binance as the primary price/candle source per a deliberate, temporary
+// call to de-risk while debugging other issues. Keyless public API —
+// rate-limited (~10-30 calls/min) but no account/key needed. Its OHLC
+// endpoint is coarser than an exchange's kline data (see fetchOhlc below)
+// — that's the known tradeoff of this swap, not a bug.
 const fetch = require('node-fetch');
 
 const BASE = 'https://api.coingecko.com/api/v3';
@@ -38,4 +41,16 @@ async function fetchMarkets(geckoIds) {
   }]));
 }
 
-module.exports = { fetchMarkets };
+// CoinGecko's OHLC endpoint — coarser than an exchange's kline data by
+// design: granularity is auto-selected by CoinGecko based on `days`, not
+// independently choosable. 1-2 days -> 30min candles, 3-30 days -> 4h
+// candles, 31+ days -> 4-day candles. There's no true 1-minute resolution
+// available here — that's the real tradeoff of using CoinGecko as primary
+// instead of an exchange directly. Returns oldest->newest.
+async function fetchOhlc(geckoId, days) {
+  const url = `${BASE}/coins/${geckoId}/ohlc?vs_currency=usd&days=${days}`;
+  const data = await fetchJson(url);
+  return data.map((r) => ({ openTime: r[0], open: r[1], high: r[2], low: r[3], close: r[4] }));
+}
+
+module.exports = { fetchMarkets, fetchOhlc };
